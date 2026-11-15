@@ -101,7 +101,7 @@ function startScene() {
   }
   const loop = (now) => {
     requestAnimationFrame(loop);
-    if (document.hidden || now - last < 33) return;
+    if (document.hidden || !document.hasFocus() || now - last < 33) return;   // odakta değilken çizme
     last = now; draw();
   };
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) draw(); else requestAnimationFrame(loop);
@@ -484,4 +484,79 @@ function showLogin() {
     const el = e.target.closest && e.target.closest('.tile-art');
     if (el && !el.contains(e.relatedTarget)) { el.style.removeProperty('--rx'); el.style.removeProperty('--ry'); }
   }, { passive: true });
+})();
+
+
+/* ===== Çerçevesiz pencere: küçült / büyüt / kapat + kenardan boyutlandırma ===== */
+(function () {
+  const SVG = {
+    min: '<svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+    max: '<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+    close: '<svg width="12" height="12" viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>'
+  };
+  const api = () => window.pywebview && window.pywebview.api;
+
+  function build() {
+    const box = document.getElementById('winctl');
+    if (!box || !api() || box.dataset.ready) return;
+    box.dataset.ready = '1';
+    document.body.classList.add('native');
+    const mk = (cls, title, svg, fn) => {
+      const b = document.createElement('button');
+      b.className = 'wc ' + cls; b.title = title; b.type = 'button'; b.innerHTML = svg;
+      b.addEventListener('click', fn);
+      return b;
+    };
+    box.append(
+      mk('wc-min', 'Küçült', SVG.min, () => api().minimize()),
+      mk('wc-max', 'Büyüt / Geri al', SVG.max, () => api().toggle_maximize()),
+      mk('wc-close', 'Kapat', SVG.close, () => api().close()));
+    box.hidden = false;
+
+    const bar = document.getElementById('topbar');
+    if (bar) bar.addEventListener('dblclick', (e) => { if (e.target === bar) api().toggle_maximize(); });
+
+    // Kenarlardan yeniden boyutlandırma (çerçeve olmadığı için kendimiz yapıyoruz)
+    ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].forEach((d) => {
+      const g = document.createElement('div');
+      g.className = 'rz rz-' + d;
+      g.addEventListener('mousedown', async (ev) => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        const st = await api().get_bounds();
+        if (st.max) return;
+        const sx = ev.screenX, sy = ev.screenY;
+        let busy = false;
+        const move = async (e) => {
+          if (busy) return;
+          busy = true;
+          const dx = e.screenX - sx, dy = e.screenY - sy;
+          let { x, y, w, h } = st;
+          if (d.includes('e')) w = st.w + dx;
+          if (d.includes('s')) h = st.h + dy;
+          if (d.includes('w')) { w = st.w - dx; x = st.x + dx; }
+          if (d.includes('n')) { h = st.h - dy; y = st.y + dy; }
+          if (w < 960) { if (d.includes('w')) x = st.x + st.w - 960; w = 960; }
+          if (h < 640) { if (d.includes('n')) y = st.y + st.h - 640; h = 640; }
+          try { await api().set_bounds(x, y, w, h); } catch (_) {}
+          busy = false;
+        };
+        const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+      });
+      document.body.appendChild(g);
+    });
+  }
+  window.addEventListener('pywebviewready', build);
+  if (window.pywebview && window.pywebview.api) build();
+})();
+
+
+/* Performans: pencere odakta değilken (oyun açıkken, başka uygulamadayken) tüm CSS animasyonları durur */
+(function () {
+  const sync = () => document.body && document.body.classList.toggle('idle', document.hidden || !document.hasFocus());
+  addEventListener('focus', sync); addEventListener('blur', sync);
+  document.addEventListener('visibilitychange', sync);
+  document.addEventListener('DOMContentLoaded', sync);
 })();

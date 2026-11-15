@@ -15,6 +15,7 @@ Token'lar düz dosyaya yazılmaz; refresh token sistem kimlik deposunda (keyring
 """
 import base64
 import ctypes
+import ctypes.wintypes
 import hashlib
 import inspect
 import json
@@ -54,7 +55,7 @@ except ImportError:  # keyring yoksa Microsoft oturumu hatırlanmaz
     keyring = None
 
 APP = "Riven Launcher"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.5.0"
 # Otomatik güncelleme: GitHub "kullanici/depo" adını yaz (ör. "riven/RivenLauncher").
 # Boş bırakırsan otomatik güncelleme kapalı kalır. Depo herkese açık (public) olmalı.
 UPDATE_REPO = "rivendeniz/Riven-Launcher-"
@@ -309,6 +310,8 @@ def content_file(inst, ctype, fname):
 
 
 IDENT_TRIED = set()
+IDENT_RUNNING = set()
+IDENT_LOCK = threading.Lock()
 
 
 def mr_post_json(url, body, timeout=20):
@@ -408,13 +411,43 @@ def list_content(inst, ctype):
     return items
 
 
+def count_content(inst, ctype):
+    """Etkin dosya sayısı: sadece dizin taraması (zip açmaz, index okumaz) -> liste ekranları çok daha hızlı."""
+    exts = CTYPES[ctype][1]["ext"]
+    n = 0
+    try:
+        with os.scandir(content_dir(inst, ctype)) as it:
+            for e in it:
+                name = e.name
+                if name.endswith(".disabled") or not name.lower().endswith(exts) or not e.is_file():
+                    continue
+                if ctype == "mods" and name.lower().startswith(RIVEN_MOD_PREFIX):
+                    continue
+                n += 1
+    except OSError:
+        pass
+    return n
+
+
+def count_worlds(inst):
+    n = 0
+    try:
+        with os.scandir(saves_dir(inst)) as it:
+            for e in it:
+                if e.is_dir() and os.path.isfile(os.path.join(e.path, "level.dat")):
+                    n += 1
+    except OSError:
+        pass
+    return n
+
+
 def public_instance(inst):
     out = dict(inst)
     out.setdefault("icon_key", ICON_KEYS[int(hashlib.sha1(inst["id"].encode()).hexdigest(), 16) % len(ICON_KEYS)])
     out.setdefault("custom_icon", False)
     out.setdefault("icon_rev", 0)
-    out["counts"] = {k: sum(1 for i in list_content(inst, k) if i["enabled"]) for k in CTYPES}
-    out["counts"]["worlds"] = len(list_worlds(inst, with_size=False))
+    out["counts"] = {k: count_content(inst, k) for k in CTYPES}
+    out["counts"]["worlds"] = count_worlds(inst)
     return out
 
 
@@ -429,6 +462,16 @@ def mc_supports_fabric(mc):
 def mc_supports_optifine(mc):
     """1.14 öncesi (1.8 - 1.13.x): Fabric yok, bunun yerine OptiFine kullanılır."""
     return MIN_MC <= _ver_tuple(mc) < FABRIC_MIN_MC
+
+
+MOD_LOADERS = ("fabric", "forge")
+CF_LOADER_IDS = {"fabric": 4, "forge": 1}   # CurseForge modLoaderType
+
+
+def inst_mod_loader(inst):
+    """Instance mod destekliyorsa 'fabric' / 'forge', yoksa None."""
+    l = (inst or {}).get("loader")
+    return l if l in MOD_LOADERS else None
 
 
 def default_loader(mc):
@@ -466,7 +509,8 @@ def get_versions():
 
 
 # --------------------------------------------------------------------- Modrinth
-MODRINTH_HOSTS = {"bmclapi2.bangbang93.com", "optifine.net", "api.modrinth.com", "cdn.modrinth.com", "api.curseforge.com",
+MODRINTH_HOSTS = {"libraries.minecraft.net", "repo1.maven.org", "maven.minecraftforge.net", "files.minecraftforge.net",
+                  "bmclapi2.bangbang93.com", "optifine.net", "api.modrinth.com", "cdn.modrinth.com", "api.curseforge.com",
                   "edge.forgecdn.net", "mediafilez.forgecdn.net", "media.forgecdn.net",
                   "edge-service.forgecdn.net", "mediafiles.forgecdn.net"}
 _REAL_GETADDRINFO = socket.getaddrinfo
@@ -727,13 +771,13 @@ SORT_KEYS = ("relevance", "downloads", "updated", "newest")
 def modrinth_search(query, ptype, inst, offset, sort="", mc=""):
     facets = [[f"project_type:{ptype}"]]
     if ptype == "modpack":
-        facets.append(["categories:fabric"])  # launcher yalnızca Fabric paketlerini kurabilir
+        facets.append(["categories:fabric", "categories:forge"])  # Fabric veya Forge paketleri (aynı grup = VEYA)
         if mc:
             facets.append([f"versions:{mc}"])
     elif inst:
         facets.append([f"versions:{inst['mc_version']}"])
         if ptype == "mod":
-            facets.append(["categories:fabric"])
+            facets.append([f"categories:{inst_mod_loader(inst) or 'fabric'}"])
     if sort not in SORT_KEYS:
         sort = "relevance"
     if sort == "relevance" and not query:
@@ -765,7 +809,7 @@ def modrinth_search(query, ptype, inst, offset, sort="", mc=""):
 def pick_version(project_id, inst, ptype):
     params = {"game_versions": json.dumps([inst["mc_version"]])}
     if ptype == "mod":
-        params["loaders"] = json.dumps(["fabric"])
+        params["loaders"] = json.dumps([inst_mod_loader(inst) or "fabric"])
     versions = http_json(f"{MODRINTH}/project/{urllib.parse.quote(project_id)}/version?"
                          + urllib.parse.urlencode(params))
     if not versions:
@@ -1015,8 +1059,10 @@ def _valid_optifine_jar(path):
     try:
         with zipfile.ZipFile(path) as zf:
             names = zf.namelist()
+        # Not: 1.8-1.11 OptiFine jar'larında launchwrapper-of-*.jar YOKTUR (yalnızca yeni sürümlerde var);
+        # eskiden bunu şart koştuğumuz için 1.8 OptiFine "geçersiz dosya" sayılıp hiç kurulamıyordu.
         return any(n.startswith("optifine/") for n in names) and \
-            any(re.fullmatch(r"launchwrapper-of-[\d.]+\.jar", n) for n in names)
+            ("optifine/OptiFineTweaker.class" in names or "optifine/Installer.class" in names)
     except Exception:
         return False
 
@@ -1074,6 +1120,25 @@ def optifine_download(build):
     raise RuntimeError("OptiFine indirilemedi (" + "; ".join(errors) + ")")
 
 
+def _ensure_maven_lib(base, group, artifact, version, mirrors):
+    """Maven kütüphanesini <base>/libraries altına indirir (varsa dokunmaz)."""
+    rel = f"{group.replace('.', '/')}/{artifact}/{version}/{artifact}-{version}.jar"
+    dest = Path(base) / "libraries" / rel
+    if dest.is_file() and dest.stat().st_size > 1024:
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    errors = []
+    for root in mirrors:
+        try:
+            _download_to(f"{root}/{rel}", dest)
+            if dest.is_file() and dest.stat().st_size > 1024 and zipfile.is_zipfile(dest):
+                return dest
+            dest.unlink(missing_ok=True)
+        except Exception as exc:
+            errors.append(f"{root}: {exc}")
+    raise RuntimeError(f"{artifact}-{version} indirilemedi ({'; '.join(errors)})")
+
+
 def find_installed_optifine(installed_ids, mc_version):
     found = [i for i in installed_ids if i.startswith(mc_version + "-OptiFine_")]
     def key(i):
@@ -1105,12 +1170,24 @@ def install_optifine(mc, cb=None):
     lib_of = base / "libraries" / "optifine" / "OptiFine" / ver
     lib_of.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(jar, lib_of / f"OptiFine-{ver}.jar")
+    extra_libs = []
     with zipfile.ZipFile(jar) as zf:
-        lw = next(n for n in zf.namelist() if re.fullmatch(r"launchwrapper-of-[\d.]+\.jar", n))
-        lw_ver = re.fullmatch(r"launchwrapper-of-([\d.]+)\.jar", lw).group(1)
-        lw_dir = base / "libraries" / "optifine" / "launchwrapper-of" / lw_ver
-        lw_dir.mkdir(parents=True, exist_ok=True)
-        (lw_dir / f"launchwrapper-of-{lw_ver}.jar").write_bytes(zf.read(lw))
+        lw = next((n for n in zf.namelist() if re.fullmatch(r"launchwrapper-of-[\d.]+\.jar", n)), None)
+        if lw:   # yeni OptiFine: kendi launchwrapper'ını getirir
+            lw_ver = re.fullmatch(r"launchwrapper-of-([\d.]+)\.jar", lw).group(1)
+            lw_dir = base / "libraries" / "optifine" / "launchwrapper-of" / lw_ver
+            lw_dir.mkdir(parents=True, exist_ok=True)
+            (lw_dir / f"launchwrapper-of-{lw_ver}.jar").write_bytes(zf.read(lw))
+            extra_libs.append({"name": f"optifine:launchwrapper-of:{lw_ver}"})
+    if not extra_libs:   # 1.8 - 1.11: klasik Mojang launchwrapper + asm-all gerekir (HMCL/PCL de böyle yapar)
+        if cb.get("setStatus"):
+            cb["setStatus"]("OptiFine kütüphaneleri indiriliyor...")
+        _ensure_maven_lib(base, "net.minecraft", "launchwrapper", "1.12",
+                          ["https://libraries.minecraft.net", "https://bmclapi2.bangbang93.com/maven"])
+        _ensure_maven_lib(base, "org.ow2.asm", "asm-all", "5.0.3",
+                          ["https://libraries.minecraft.net", "https://repo1.maven.org/maven2",
+                           "https://bmclapi2.bangbang93.com/maven"])
+        extra_libs = [{"name": "net.minecraft:launchwrapper:1.12"}, {"name": "org.ow2.asm:asm-all:5.0.3"}]
 
     tweak = ["--tweakClass", "optifine.OptiFineTweaker"]
     data = {
@@ -1118,7 +1195,7 @@ def install_optifine(mc, cb=None):
         "time": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
         "releaseTime": parent.get("releaseTime", "2000-01-01T00:00:00+00:00"),
         "mainClass": "net.minecraft.launchwrapper.Launch",
-        "libraries": [{"name": f"optifine:OptiFine:{ver}"}, {"name": f"optifine:launchwrapper-of:{lw_ver}"}],
+        "libraries": [{"name": f"optifine:OptiFine:{ver}"}] + extra_libs,
     }
     if parent.get("arguments"):
         data["arguments"] = {"game": tweak}
@@ -1129,6 +1206,114 @@ def install_optifine(mc, cb=None):
     (out / f"{vid}.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
     add_log(f"OptiFine kuruldu: {vid}")
     return vid
+
+
+# ------------------------------------------------------------------ Forge
+FORGE_CACHE = {}
+
+
+def forge_available(mc):
+    """Bu Minecraft sürümü için Forge var mı? (minecraft-launcher-lib Forge sürüm listesinden)"""
+    if mc in FORGE_CACHE and time.time() - FORGE_CACHE[mc][0] < 3600:
+        return bool(FORGE_CACHE[mc][1])
+    try:
+        v = mll.forge.find_forge_version(mc)
+    except Exception as exc:
+        add_log(f"Forge sürümü sorgulanamadı ({mc}): {exc}")
+        return mc in FORGE_CACHE and bool(FORGE_CACHE[mc][1])
+    FORGE_CACHE[mc] = (time.time(), v)
+    return bool(v)
+
+
+def find_installed_forge(installed_ids, mc_version):
+    """Kurulu Forge sürüm kimliği (ör. 1.20.1-forge-47.2.0 veya 1.12.2-forge1.12.2-14.23.5.2860)."""
+    found = [i for i in installed_ids if i.startswith(mc_version + "-forge") or
+             (i.startswith("forge-") and i.endswith(mc_version))]
+    found.sort()
+    return found[-1] if found else None
+
+
+def forge_libs_ok(version_id):
+    """Forge sürüm JSON'undaki kütüphaneler diskte tam mı? (yarım kalmış kurulumu yakalar)"""
+    try:
+        vj = json.loads((Path(SHARED_DIR) / "versions" / version_id / f"{version_id}.json").read_text(encoding="utf-8"))
+        for lib in vj.get("libraries", []):
+            art = (lib.get("downloads") or {}).get("artifact") or {}
+            path = art.get("path")
+            if not path or not art.get("url"):
+                continue   # yükleyicinin üreteceği dosyalar (client jar vb.) atlanır
+            f = Path(SHARED_DIR) / "libraries" / path
+            if not f.is_file() or f.stat().st_size < 1024 and art.get("size", 0) > 1024:
+                add_log(f"Forge kütüphanesi eksik/bozuk: {path}")
+                return False
+        return True
+    except Exception:
+        return True
+
+
+def install_forge(mc, cb=None):
+    cb = cb or {}
+    if cb.get("setStatus"):
+        cb["setStatus"](f"Forge hazırlanıyor ({mc})...")
+    fv = mll.forge.find_forge_version(mc)
+    if not fv:
+        raise RuntimeError(f"{mc} için Forge sürümü bulunamadı.")
+    add_log(f"Forge kuruluyor: {fv}")
+    java = None
+    try:   # modern Forge yükleyicisi Java ister: önce launcher'ın indirdiği çalışma zamanı, yoksa sistem Java'sı
+        java = find_any_java()
+    except Exception:
+        java = None
+    kwargs = {"callback": cb}
+    if java:
+        kwargs["java"] = java
+    for attempt in range(3):
+        try:
+            mll.forge.install_forge_version(fv, SHARED_DIR, **kwargs)
+            break
+        except Exception as exc:
+            # Yükleyici "has the wrong Checksum" derse bozuk/yarım inen kütüphaneyi sil ve tekrar dene
+            m = re.search(r"([A-Za-z]:[\\/][^\r\n]*?\.jar) has the wrong checksum", str(exc), re.I)
+            if not m or attempt == 2:
+                raise
+            bad = Path(m.group(1))
+            add_log(f"Bozuk kütüphane siliniyor, yeniden denenecek: {bad}")
+            try:
+                bad.unlink()
+            except Exception:
+                raise exc
+    return mll.forge.forge_to_installed_version(fv)
+
+
+def ensure_natives(version_id, mc):
+    """OptiFine/Forge gibi 'inheritsFrom' sürümlerinin natives klasörü (lwjgl dll'leri) boş kalıyordu:
+    'no lwjgl64 in java.library.path' hatası. Ana sürümün natives klasörünü kopyalar."""
+    if version_id == mc:
+        return
+    vdir = Path(SHARED_DIR) / "versions"
+    dst = vdir / version_id / "natives"
+    if dst.is_dir() and any(dst.iterdir()):
+        return
+    src = vdir / mc / "natives"
+    if not (src.is_dir() and any(src.iterdir())):
+        mll.install.install_minecraft_version(mc, SHARED_DIR)   # ana sürümü yeniden kurmak natives'i çıkarır
+    if src.is_dir() and any(src.iterdir()):
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+        add_log(f"Natives kopyalandı: {version_id}")
+
+
+def find_any_java():
+    """SHARED_DIR/runtime altındaki en yeni java(w).exe ya da PATH'teki java."""
+    exe = "java.exe" if sys.platform.startswith("win") else "java"
+    runtime = Path(SHARED_DIR) / "runtime"
+    cands = sorted(runtime.glob(f"**/bin/{exe}"), key=lambda x: x.stat().st_mtime, reverse=True) if runtime.is_dir() else []
+    # Forge yükleyicisi için en yeni (en az Java 17) çalışma zamanı tercih edilir
+    for c in cands:
+        if "jre-legacy" not in str(c) and "java-runtime-alpha" not in str(c) and "java-runtime-beta" not in str(c):
+            return str(c)
+    if cands:
+        return str(cands[0])
+    return shutil.which("java")
 
 
 def refresh_fabric_loaders():
@@ -1353,7 +1538,7 @@ def launch_worker(inst, repair):
         cb = progress_callbacks()
 
         # Riven Tag Fabric ister: jar'ı olan sürümlerde Vanilla instance'lar da Fabric ile açılır.
-        use_fabric = (inst["loader"] == "fabric" or riven_tag_available(inst)) and mc_supports_fabric(mc)
+        use_fabric = (inst["loader"] == "fabric" or (inst["loader"] != "forge" and riven_tag_available(inst))) and mc_supports_fabric(mc)
         local_fabric = find_installed_fabric(installed, mc) if use_fabric else None
         if use_fabric and local_fabric and not repair:
             version_id = local_fabric   # kuruluysa ağa hiç çıkma (loader güncellemesi arka planda yapılır)
@@ -1379,8 +1564,21 @@ def launch_worker(inst, repair):
                 add_log(f"Kuruluyor: {mc}")
                 mll.install.install_minecraft_version(mc, SHARED_DIR, callback=cb)
                 installed.add(mc)
+            if inst["loader"] == "forge":
+                local_forge = find_installed_forge(installed, mc)
+                if local_forge and not repair and forge_libs_ok(local_forge):
+                    version_id = local_forge
+                else:
+                    try:
+                        version_id = install_forge(mc, cb)
+                    except Exception as exc:
+                        if local_forge:
+                            add_log(f"Forge güncellenemedi, kurulu sürüm kullanılacak: {exc}")
+                            version_id = local_forge
+                        else:
+                            raise RuntimeError(f"Forge kurulamadı: {exc}")
             # 1.14 öncesi: OptiFine instance'ları OptiFine ile açılır (Vanilla seçilmişse dokunulmaz)
-            if inst["loader"] == "optifine" and mc_supports_optifine(mc):
+            elif inst["loader"] == "optifine" and mc_supports_optifine(mc):
                 local_of = find_installed_optifine(installed, mc)
                 if local_of and not repair:
                     version_id = local_of   # kuruluysa ağa çıkma
@@ -1393,6 +1591,12 @@ def launch_worker(inst, repair):
                             version_id = local_of
                         else:
                             add_log(f"UYARI: OptiFine kurulamadı, Vanilla açılıyor: {exc}")
+
+        if inst["loader"] in ("optifine", "forge"):
+            try:
+                ensure_natives(version_id, mc)
+            except Exception as exc:
+                add_log(f"UYARI: natives hazırlanamadı: {exc}")
 
         game_dir = instance_dir(inst)
         for sub in ("mods", "resourcepacks", "shaderpacks", "saves"):
@@ -1579,7 +1783,7 @@ def desired_activity(cfg):
         except ApiError:
             inst = None
         if inst:
-            mods = sum(1 for i in list_content(inst, "mods") if i["enabled"]) if inst["loader"] == "fabric" else 0
+            mods = sum(1 for i in list_content(inst, "mods") if i["enabled"]) if inst_mod_loader(inst) else 0
             state = f"Minecraft {inst['mc_version']} • {loaderlabel(inst['loader'])}" + (f" • {mods} mod" if mods else "")
             return {"details": inst["name"] if cfg["show_name"] else "Minecraft oynuyor",
                     "state": state, "assets": assets,
@@ -1592,7 +1796,7 @@ def desired_activity(cfg):
 
 
 def loaderlabel(loader):
-    return {"fabric": "Fabric", "optifine": "OptiFine"}.get(loader, "Vanilla")
+    return {"fabric": "Fabric", "forge": "Forge", "optifine": "OptiFine"}.get(loader, "Vanilla")
 
 
 def discord_worker():
@@ -1679,6 +1883,29 @@ def r_versions(m, q, b):
     return {"versions": get_versions(), "default": DEFAULT_VERSION}
 
 
+FORGE_SUPPORTED = {"t": 0.0, "v": []}
+
+
+@route("GET", "/forge/supported")
+def r_forge_supported(m, q, b):
+    """Forge'un bulunduğu Minecraft sürümleri (yeni instance penceresi Forge seçeneğini buna göre açar)."""
+    if FORGE_SUPPORTED["v"] and time.time() - FORGE_SUPPORTED["t"] < 3600:
+        return {"versions": FORGE_SUPPORTED["v"]}
+    mcs = set()
+    try:   # Forge'un resmi sürüm özeti: anahtarlar "1.8.9-latest", "1.20.1-recommended" biçimindedir
+        promos = http_json("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json").get("promos") or {}
+        for key in promos:
+            mc = str(key).rsplit("-", 1)[0]
+            if _plain_release(mc):
+                mcs.add(mc)
+    except Exception as exc:
+        add_log(f"Forge sürüm listesi alınamadı: {exc}")
+    out = sorted(mcs, key=_ver_tuple, reverse=True)
+    if out:
+        FORGE_SUPPORTED.update(t=time.time(), v=out)
+    return {"versions": out or FORGE_SUPPORTED["v"]}
+
+
 @route("GET", "/instances")
 def r_instances(m, q, b):
     return {"instances": [public_instance(i) for i in load_instances()]}
@@ -1719,9 +1946,12 @@ def r_create(m, q, b):
     if not re.fullmatch(r"[0-9A-Za-z._\-]{1,32}", mc):
         raise ApiError("Geçersiz sürüm.")
     loader = b.get("loader") or default_loader(mc)
-    if loader not in ("fabric", "optifine", "vanilla"):
+    if loader not in ("fabric", "forge", "optifine", "vanilla"):
         raise ApiError("Geçersiz loader.")
-    if loader in ("fabric", "optifine"):
+    if loader == "forge":
+        if not forge_available(mc):
+            raise ApiError(f"{mc} için Forge sürümü bulunamadı.")
+    elif loader in ("fabric", "optifine"):
         # Fabric 1.14 öncesini desteklemez -> OptiFine; OptiFine yalnızca 1.14 öncesi için -> Fabric
         loader = default_loader(mc)
         if loader == "optifine" and not mc_supports_optifine(mc):
@@ -1855,9 +2085,25 @@ def r_folder(m, q, b):
 def r_content(m, q, b):
     inst = get_instance(valid_id(m.group(1)))
     ctype = qs(q, "type", "mods")
+    identifying = False
     if ctype in CTYPES:
-        identify_unindexed(inst, [ctype])
-    return {"items": list_content(inst, ctype)}
+        # Dosya tanıma (SHA-1 + Modrinth sorgusu) yavaştı ve sayfayı bekletiyordu: arka planda çalışır,
+        # liste hemen döner. Bitince arayüz listeyi kendiliğinden tazeler.
+        key = (inst["id"], ctype)
+        with IDENT_LOCK:
+            identifying = key in IDENT_RUNNING
+            if not identifying and not qs(q, "poll"):
+                IDENT_RUNNING.add(key)
+
+                def work():
+                    try:
+                        identify_unindexed(inst, [ctype])
+                    finally:
+                        with IDENT_LOCK:
+                            IDENT_RUNNING.discard(key)
+                threading.Thread(target=work, daemon=True).start()
+                identifying = True
+    return {"items": list_content(inst, ctype), "identifying": identifying}
 
 
 @route("GET", f"/instances/{ID}/content/info")
@@ -1943,7 +2189,7 @@ def r_install(m, q, b):
     ptype = b.get("type", "mod")
     if ptype not in PTYPES:
         raise ApiError("Geçersiz tür.")
-    if ptype == "mod" and inst["loader"] != "fabric":
+    if ptype == "mod" and not inst_mod_loader(inst):
         raise ApiError(f"{loaderlabel(inst['loader'])} instance'a mod kurulamaz.")
     pid = project_id_ok(b.get("project_id"))
     with INSTALL_LOCK:
@@ -2782,7 +3028,8 @@ def cf_search(query, ptype, inst, offset, sort="", mc=""):
     if version:
         params["gameVersion"] = version
     if ptype in ("mod", "modpack"):
-        params["modLoaderType"] = CF_FABRIC
+        if ptype == "mod":   # modpack aramasında loader filtresi yok: hem Fabric hem Forge paketleri gelsin
+            params["modLoaderType"] = CF_LOADER_IDS.get(inst_mod_loader(inst) or "fabric", CF_FABRIC)
     data = cf_request("/mods/search", params)
     add_log(f"CurseForge arama: sorgu='{query}' tür={ptype} sürüm={version or '-'} -> {len(data.get('data', []))} sonuç")
     if not data.get("data") and "modLoaderType" in params and offset == 0:
@@ -2810,18 +3057,18 @@ def cf_search(query, ptype, inst, offset, sort="", mc=""):
     return {"hits": hits, "total": min(total, 10000), "offset": offset}
 
 
-def cf_pick_file(mod_id, mc, fabric):
+def cf_pick_file(mod_id, mc, fabric, loader="fabric"):
     def fetch(with_loader):
         params = {"gameVersion": mc, "pageSize": 50}
         if with_loader:
-            params["modLoaderType"] = CF_FABRIC
+            params["modLoaderType"] = CF_LOADER_IDS.get(loader, CF_FABRIC)
         return [f for f in cf_request(f"/mods/{int(mod_id)}/files", params).get("data", [])
                 if f.get("isAvailable", True)]
 
     files = fetch(fabric)
     if not files and fabric:  # bazı dosyalarda loader alanı boş; sürüm listesinden Fabric'i ara
         files = [f for f in fetch(False)
-                 if any(str(v).lower() == "fabric" for v in (f.get("gameVersions") or []))]
+                 if any(str(v).lower() == loader for v in (f.get("gameVersions") or []))]
     if not files:
         raise ApiError(f"Bu proje {mc} için uyumlu dosya sunmuyor.")
     files.sort(key=lambda f: f.get("fileDate", ""), reverse=True)
@@ -2936,7 +3183,7 @@ def cf_install_one(inst, ptype, proj, file, installed, done, manual, depth=0):
                 continue
             try:
                 dproj = cf_request(f"/mods/{dmod}")["data"]
-                dfile = cf_pick_file(dmod, inst["mc_version"], True)
+                dfile = cf_pick_file(dmod, inst["mc_version"], True, inst_mod_loader(inst) or "fabric")
                 cf_install_one(inst, ptype, dproj, dfile, installed, done, manual, depth + 1)
             except ApiError as exc:
                 add_log(f"Bağımlılık kurulamadı (CurseForge {dmod}): {exc.msg}")
@@ -2948,7 +3195,7 @@ def cf_install_project(inst, ptype, pid):
     installed = {v.get("project_id") for k, v in load_index(inst).items() if k.startswith(ctype + "/")}
     if f"cf:{proj['id']}" in installed:
         return {"installed": [], "skipped": True, "manual": []}
-    file = cf_pick_file(proj["id"], inst["mc_version"], ptype == "mod")
+    file = cf_pick_file(proj["id"], inst["mc_version"], ptype == "mod", inst_mod_loader(inst) or "fabric")
     done, manual = [], []
     cf_install_one(inst, ptype, proj, file, installed, done, manual)
     return {"installed": done, "skipped": False, "manual": manual}
@@ -3215,7 +3462,17 @@ def run_downloads(tasks, label, workers=4):
     def wrap(item):
         title, fn = item
         try:
-            fn()
+            for attempt in range(3):   # geçici ağ hatalarında dosyayı 3 kereye kadar yeniden dene
+                try:
+                    fn()
+                    break
+                except ManualDownload:
+                    raise
+                except Exception as exc:
+                    msg = str(getattr(exc, "msg", exc))
+                    if attempt == 2 or any(k in msg for k in ("bulunamadı", "güvensiz", "eksik", "Geçersiz")):
+                        raise
+                    time.sleep(1.5 * (attempt + 1))
         except ManualDownload as exc:
             with lock:
                 JOB["manual"].append({"title": exc.title, "url": exc.url})
@@ -3305,7 +3562,7 @@ def pack_name(requested, fallback):
     return name or "Modpack"
 
 
-def install_mrpack(path, requested_name, fallback_name):
+def install_mrpack(path, requested_name, fallback_name, want=""):
     with zipfile.ZipFile(path) as zf:
         try:
             index = json.loads(zf.read("modrinth.index.json"))
@@ -3315,9 +3572,12 @@ def install_mrpack(path, requested_name, fallback_name):
         mc = str(deps.get("minecraft", ""))
         if not re.fullmatch(r"[0-9A-Za-z._\-]{1,32}", mc):
             raise ApiError("Paketin Minecraft sürümü anlaşılamadı.")
-        if any(k in deps for k in ("forge", "neoforge", "quilt-loader")):
-            raise ApiError("Bu paket Forge/NeoForge/Quilt kullanıyor. Riven şimdilik yalnızca Fabric paketlerini kurar.")
-        loader = "fabric" if "fabric-loader" in deps else "vanilla"
+        has = [n for n, k in (("fabric", "fabric-loader"), ("forge", "forge")) if k in deps]
+        if not has and any(k in deps for k in ("neoforge", "quilt-loader")):
+            raise ApiError("Bu paket NeoForge/Quilt kullanıyor. Riven Fabric ve Forge paketlerini kurar.")
+        loader = (want if want in has else has[0]) if has else "vanilla"
+        if loader == "forge" and not forge_available(mc):
+            raise ApiError(f"{mc} için Forge sürümü bulunamadı.")
         entries = [e for e in index.get("files") or []
                    if isinstance(e, dict) and (e.get("env") or {}).get("client") != "unsupported"]
         inst = create_instance(pack_name(requested_name, index.get("name") or fallback_name), mc, loader,
@@ -3338,14 +3598,20 @@ def install_mrpack(path, requested_name, fallback_name):
     return inst
 
 
-def mr_modpack_job(pid, name):
+def mr_modpack_job(pid, name, want=""):
     job_update(message="Paket bilgisi alınıyor…", progress=0.02)
     proj = http_json(f"{MODRINTH}/project/{urllib.parse.quote(pid)}")
+    wanted = [want] if want in ("fabric", "forge") else ["fabric", "forge"]
     versions = http_json(f"{MODRINTH}/project/{urllib.parse.quote(pid)}/version?"
-                         + urllib.parse.urlencode({"loaders": json.dumps(["fabric"])}))
+                         + urllib.parse.urlencode({"loaders": json.dumps(wanted)}))
     if not versions:
-        raise ApiError("Bu paket Fabric için sürüm sunmuyor. Riven şimdilik yalnızca Fabric paketlerini kurar.")
+        raise ApiError(f"Bu paket {wanted[0].capitalize() if len(wanted) == 1 else 'Fabric/Forge'} için sürüm sunmuyor.")
+    if len(wanted) > 1:   # seçim yoksa Fabric öncelikli, yoksa Forge
+        fab = [v for v in versions if "fabric" in (v.get("loaders") or [])]
+        versions = fab or versions
     version = ([v for v in versions if v.get("version_type") == "release"] or versions)[0]
+    if want not in ("fabric", "forge"):
+        want = "fabric" if "fabric" in (version.get("loaders") or []) else "forge"
     files = version.get("files") or []
     info = next((f for f in files if f.get("primary")), files[0] if files else None)
     if not info or not str(info.get("filename", "")).lower().endswith(".mrpack"):
@@ -3359,7 +3625,7 @@ def mr_modpack_job(pid, name):
         want = (info.get("hashes") or {}).get("sha512")
         if not want or want.lower() != got["sha512"]:
             raise ApiError("Paket doğrulaması (hash) başarısız.")
-        inst = install_mrpack(tmp, name, proj.get("title"))
+        inst = install_mrpack(tmp, name, proj.get("title"), want)
         job_update(message="Simgeler ve mod bilgileri hazırlanıyor…", progress=0.98)
         set_pack_icon(inst, cdn_icon(proj.get("icon_url")), {"cdn.modrinth.com"})
         identify_unindexed(inst)
@@ -3373,15 +3639,21 @@ def mr_modpack_job(pid, name):
 CF_CLASS_DIR = {6: ("mods", (".jar",)), 12: ("resourcepacks", (".zip",)), 6552: ("shaderpacks", (".zip",))}
 
 
-def cf_modpack_job(pid, name):
+def cf_modpack_job(pid, name, want=""):
     job_update(message="Paket bilgisi alınıyor…", progress=0.02)
     proj = cf_request(f"/mods/{int(pid)}")["data"]
     page = cf_page_url(proj)
+    names = {"fabric": "Fabric", "forge": "Forge"}
+    wanted = [want] if want in names else ["fabric", "forge"]
     files = [f for f in cf_request(f"/mods/{int(pid)}/files", {"pageSize": 30}).get("data", [])
-             if f.get("isAvailable", True) and "Fabric" in (f.get("gameVersions") or [])]
+             if f.get("isAvailable", True)
+             and any(names[w] in (f.get("gameVersions") or []) for w in wanted)]
     if not files:
-        raise ApiError("Bu paket Fabric için sürüm sunmuyor. Riven şimdilik yalnızca Fabric paketlerini kurar.")
+        raise ApiError(f"Bu paket {names[wanted[0]] if len(wanted) == 1 else 'Fabric/Forge'} için sürüm sunmuyor.")
     files.sort(key=lambda f: f.get("fileDate", ""), reverse=True)
+    if len(wanted) > 1:   # seçim yoksa Fabric öncelikli
+        fab = [f for f in files if "Fabric" in (f.get("gameVersions") or [])]
+        files = fab or files
     pack = ([f for f in files if f.get("releaseType") == 1] or files)[0]
     url = cf_download_url(pack, pid)
     if not url:
@@ -3407,13 +3679,16 @@ def cf_modpack_job(pid, name):
             loaders = mcinfo.get("modLoaders") or []
             primary = str(next((l.get("id") for l in loaders if l.get("primary")),
                                loaders[0].get("id") if loaders else ""))
-            if primary and not primary.startswith("fabric-"):
-                raise ApiError("Bu paket Fabric dışı bir loader kullanıyor. Riven şimdilik yalnızca Fabric paketlerini kurar.")
+            if primary and not primary.startswith(("fabric-", "forge-")):
+                raise ApiError("Bu paket NeoForge/Quilt gibi desteklenmeyen bir loader kullanıyor. Riven Fabric ve Forge paketlerini kurar.")
+            pack_loader = "forge" if primary.startswith("forge-") else "fabric" if primary else "vanilla"
+            if pack_loader == "forge" and not forge_available(mc):
+                raise ApiError(f"{mc} için Forge sürümü bulunamadı.")
             refs = [(int(f["projectID"]), int(f["fileID"])) for f in man.get("files") or []
                     if isinstance(f, dict) and str(f.get("projectID", "")).isdigit()
                     and str(f.get("fileID", "")).isdigit()]
             inst = create_instance(pack_name(name, man.get("name") or proj.get("name")), mc,
-                                   "fabric" if primary else "vanilla", color=random.randrange(8))
+                                   pack_loader, color=random.randrange(8))
             JOB["instance"] = inst["id"]
             game_dir = instance_dir(inst)
             try:
@@ -3613,7 +3888,7 @@ def r_cf_install(m, q, b):
     ptype = b.get("type", "mod")
     if ptype != "world" and ptype not in PTYPES:
         raise ApiError("Geçersiz tür.")
-    if ptype == "mod" and inst["loader"] != "fabric":
+    if ptype == "mod" and not inst_mod_loader(inst):
         raise ApiError(f"{loaderlabel(inst['loader'])} instance'a mod kurulamaz.")
     pid = str(b.get("project_id", ""))
     if not re.fullmatch(r"\d{1,10}", pid):
@@ -3677,7 +3952,7 @@ POOL = ThreadPoolExecutor(max_workers=8)
 def mr_versions(pid, inst, ptype):
     params = {"game_versions": json.dumps([inst["mc_version"]])}
     if ptype == "mod":
-        params["loaders"] = json.dumps(["fabric"])
+        params["loaders"] = json.dumps([inst_mod_loader(inst) or "fabric"])
     raw = http_json(f"{MODRINTH}/project/{urllib.parse.quote(pid)}/version?" + urllib.parse.urlencode(params))
     out = []
     for v in raw[:60]:
@@ -3721,18 +3996,18 @@ def mr_project_info(pid, inst, hint="mod"):
             "gallery": gallery, "versions": versions}
 
 
-def cf_list_files(mod_id, mc, fabric):
+def cf_list_files(mod_id, mc, fabric, loader="fabric"):
     def fetch(with_loader):
         params = {"gameVersion": mc, "pageSize": 60}
         if with_loader:
-            params["modLoaderType"] = CF_FABRIC
+            params["modLoaderType"] = CF_LOADER_IDS.get(loader, CF_FABRIC)
         return [f for f in cf_request(f"/mods/{int(mod_id)}/files", params).get("data", [])
                 if f.get("isAvailable", True)]
 
     files = fetch(fabric)
     if not files and fabric:
         files = [f for f in fetch(False)
-                 if any(str(v).lower() == "fabric" for v in (f.get("gameVersions") or []))]
+                 if any(str(v).lower() == loader for v in (f.get("gameVersions") or []))]
     files.sort(key=lambda f: f.get("fileDate", ""), reverse=True)
     return files
 
@@ -3747,7 +4022,7 @@ def cf_description(pid):
 
 def cf_versions(pid, inst, ptype):
     out = []
-    for f in cf_list_files(pid, inst["mc_version"], ptype == "mod")[:60]:
+    for f in cf_list_files(pid, inst["mc_version"], ptype == "mod", inst_mod_loader(inst) or "fabric")[:60]:
         out.append({"id": str(f["id"]), "name": f.get("displayName") or f.get("fileName"),
                     "number": f.get("fileName"), "type": CF_RELEASE.get(f.get("releaseType"), "release"),
                     "mc": mc_only(f.get("gameVersions")), "date": f.get("fileDate"),
@@ -3828,8 +4103,8 @@ def mr_set_version(inst, ptype, pid, vid):
         raise ApiError("Bu sürüm bu projeye ait değil.")
     if inst["mc_version"] not in (version.get("game_versions") or []):
         raise ApiError(f"Bu sürüm Minecraft {inst['mc_version']} ile uyumlu değil.")
-    if ptype == "mod" and "fabric" not in (version.get("loaders") or []):
-        raise ApiError("Bu sürüm Fabric desteklemiyor.")
+    if ptype == "mod" and (inst_mod_loader(inst) or "fabric") not in (version.get("loaders") or []):
+        raise ApiError(f"Bu sürüm {loaderlabel(inst['loader'])} desteklemiyor.")
     files = version.get("files") or []
     if not files:
         raise ApiError("Sürümde dosya yok.")
@@ -3874,7 +4149,7 @@ def r_project_version(m, q, b):
     ptype = b.get("type", "mod")
     if ptype not in PTYPES:
         raise ApiError("Geçersiz tür.")
-    if ptype == "mod" and inst["loader"] != "fabric":
+    if ptype == "mod" and not inst_mod_loader(inst):
         raise ApiError(f"{loaderlabel(inst['loader'])} instance'a mod kurulamaz.")
     vid = str(b.get("version_id", ""))
     if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", vid):
@@ -3900,14 +4175,16 @@ def r_open_link(m, q, b):
 def r_modpack_install(m, q, b):
     source, pid = b.get("source"), str(b.get("project_id", ""))
     name = str(b.get("name", "")).strip()[:32]
+    want = str(b.get("loader") or "").lower()
+    want = want if want in ("fabric", "forge") else ""
     if source == "modrinth":
-        start_job(mr_modpack_job, project_id_ok(pid), name)
+        start_job(mr_modpack_job, project_id_ok(pid), name, want)
     elif source == "curseforge":
         if not re.fullmatch(r"\d{1,10}", pid):
             raise ApiError("Geçersiz proje.")
         if not cf_key():
             raise ApiError("CurseForge için API anahtarı gerekli.")
-        start_job(cf_modpack_job, pid, name)
+        start_job(cf_modpack_job, pid, name, want)
     else:
         raise ApiError("Geçersiz kaynak.")
     return {"started": True}
@@ -4288,6 +4565,74 @@ def open_app_window(url):
     webbrowser.open(url)
 
 
+class WindowApi:
+    """Çerçevesiz pencere için küçült/büyüt/kapat/yeniden boyutlandır (JS -> pywebview)."""
+
+    def __init__(self):
+        self._win = None
+        self._max = False
+
+    def minimize(self):
+        self._win.minimize()
+
+    def toggle_maximize(self):
+        if self._max:
+            self._win.restore()
+        else:
+            self._win.maximize()
+        self._max = not self._max
+        return self._max
+
+    def close(self):
+        self._win.destroy()
+
+    def get_bounds(self):
+        w = self._win
+        return {"x": w.x, "y": w.y, "w": w.width, "h": w.height, "max": self._max}
+
+    def set_bounds(self, x, y, w, h):
+        if self._max:
+            return
+        w, h = max(960, int(w)), max(640, int(h))
+        self._win.resize(w, h)
+        self._win.move(int(x), int(y))
+
+
+def round_window_corners(win, wapi=None, radius=10):
+    """Çerçevesiz pencerenin köşelerini hafifçe yuvarla (Windows 11: DWM, Windows 10: pencere bölgesi).
+    Büyütülmüşken (maximize) yuvarlama kapatılır. Hata olursa sessizce atlanır."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        form = getattr(win, "native", None)
+        if form is None:
+            return
+        hwnd = int(form.Handle.ToInt64())
+        maxed = bool(wapi and wapi._max)
+        dwm_ok = False
+        try:   # Windows 11: DWMWA_WINDOW_CORNER_PREFERENCE (33): 2 = yuvarlak, 1 = yuvarlama yok
+            val = ctypes.c_int(1 if maxed else 2)
+            dwm_ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                ctypes.c_void_p(hwnd), 33, ctypes.byref(val), ctypes.sizeof(val)) == 0
+        except Exception:
+            dwm_ok = False
+        if dwm_ok and sys.getwindowsversion().build >= 22000:
+            ctypes.windll.user32.SetWindowRgn(ctypes.c_void_p(hwnd), None, True)   # DWM zaten yuvarlıyor
+            return
+        user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32   # Windows 10: bölge ile yuvarla
+        if maxed:
+            user32.SetWindowRgn(ctypes.c_void_p(hwnd), None, True)
+            return
+        rect = ctypes.wintypes.RECT()
+        user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(rect))
+        w, h = rect.right - rect.left, rect.bottom - rect.top
+        gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
+        rgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2)
+        user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(rgn), True)
+    except Exception as exc:
+        add_log(f"Köşe yuvarlama uygulanamadı: {exc}")
+
+
 def open_native_window(url, httpd):
     """Arayüzü tarayıcı olmadan, kendi uygulama penceresinde aç (pywebview).
     Başarılıysa True döner (pencere kapanınca çağrılan taraf çıkmalıdır)."""
@@ -4305,8 +4650,11 @@ def open_native_window(url, httpd):
     threading.Thread(target=brand_window, args=(APP, True), daemon=True).start()   # görev çubuğu simgesi
     ico = BASE_DIR / "riven.ico"
     try:
+        wapi = WindowApi()
         win = webview.create_window(APP, url, width=1240, height=800, min_size=(960, 640),
-                                    background_color="#0b0b12")
+                                    background_color="#0b0b12", frameless=True, easy_drag=False,
+                                    js_api=wapi)
+        wapi._win = win
 
         def set_form_icon(*_a):
             """WinForms penceresinin kendi Icon özelliğini ayarla (görev çubuğu + başlık çubuğu)."""
@@ -4332,6 +4680,16 @@ def open_native_window(url, httpd):
         try:
             win.events.shown += set_form_icon
             win.events.loaded += set_form_icon
+        except Exception:
+            pass
+        try:
+            def _round(*_a):
+                round_window_corners(win, wapi)
+            win.events.shown += _round
+            win.events.loaded += _round
+            win.events.resized += _round
+            win.events.maximized += _round
+            win.events.restored += _round
         except Exception:
             pass
         start_kw = dict(private_mode=False, storage_path=str(HOME_DIR / "webview"))
@@ -4391,6 +4749,14 @@ def main():
     threading.Thread(target=install_riven_tag_all, daemon=True).start()
     threading.Thread(target=update_worker, daemon=True).start()
     threading.Thread(target=refresh_fabric_loaders, daemon=True).start()
+    # Sürüm listelerini önceden ısıt: "Yeni instance" penceresi ve Keşfet ilk açılışta beklemesin
+    def _warm():
+        for fn in (get_versions, lambda: r_forge_supported(None, {}, {})):
+            try:
+                fn()
+            except Exception:
+                pass
+    threading.Thread(target=_warm, daemon=True).start()
     threading.Thread(target=discord_worker, daemon=True).start()
     if open_native_window(url, httpd):
         return

@@ -93,7 +93,8 @@ function icon(name, size = 20, fill = false) {
 const initial = (name) => ([...String(name).trim()][0] || '?').toUpperCase();
 const hashColor = (s) => [...String(s)].reduce((a, c) => a + c.charCodeAt(0), 0) % 8;
 const fmtNum = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(n));
-const loaderName = (l) => (l === 'fabric' ? 'Fabric' : l === 'optifine' ? 'OptiFine' : 'Vanilla');
+const loaderName = (l) => (l === 'fabric' ? 'Fabric' : l === 'forge' ? 'Forge' : l === 'optifine' ? 'OptiFine' : 'Vanilla');
+const hasMods = (inst) => !!inst && (inst.loader === 'fabric' || inst.loader === 'forge');
 const cvars = (i) => `--c1:${COLORS[i % 8][0]};--c2:${COLORS[i % 8][1]}`;
 const capitalize = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(1);
 const THEMES = { green: ['Yeşil', '#22c55e'], blue: ['Mavi', '#3b82f6'], purple: ['Mor', '#a855f7'],
@@ -174,6 +175,7 @@ function renderUpdateBar(u) {
 }
 
 async function pollOnce() {
+  if (document.hidden) return;   // pencere küçültülmüşken sunucuyu yorma
   try {
     const s = await api('/state?since=' + logIdx);
     S = s;
@@ -205,7 +207,7 @@ function schedulePoll() {
   pollTimer = setTimeout(async () => {
     await pollOnce();
     schedulePoll();
-  }, (S.preparing || S.running.length) ? 600 : 1500);
+  }, (S.preparing || S.running.length) ? 600 : 2000);
 }
 
 let whoKey = '';
@@ -336,7 +338,7 @@ async function route() {
     view.classList.add('enter');
     setTimeout(() => view.classList.remove('enter'), 900);
   }
-  view.replaceChildren(...[nodes].flat());
+  view.replaceChildren(...[nodes].flat(Infinity).filter((n) => n != null && n !== false));  // null -> "null" yazısı çiziyordu
   view.scrollTop = navigated ? 0 : top;
 }
 
@@ -385,7 +387,7 @@ function stat(label, value) {
 
 function heroStats(inst) {
   return h('div', { class: 'stats' }, stat('Sürüm', inst.mc_version), stat('Loader', loaderName(inst.loader)),
-    inst.loader === 'fabric' ? stat('Mod', inst.counts.mods) : null,
+    hasMods(inst) ? stat('Mod', inst.counts.mods) : null,
     stat('RAM', `${(inst.ram / 1024).toFixed(1).replace('.0', '')} GB`), stat('Son oyun', timeAgo(inst.last_played)));
 }
 
@@ -446,6 +448,9 @@ function swatchPicker(initialColor, onPick) {
 async function newInstanceModal() {
   let versions, def;
   try { ({ versions, default: def } = await api('/versions')); } catch (e) { toast(e.message, 'error'); return; }
+  let forgeVers = null;   // Forge olan Minecraft sürümleri (alınamazsa null: seçenek açık kalır, sunucu doğrular)
+  try { forgeVers = new Set((await api('/forge/supported')).versions); } catch (_) { forgeVers = null; }
+  const forgeOk = (v) => !forgeVers || !forgeVers.size || forgeVers.has(v);
   // Fabric yalnızca 1.14 ve üstünü destekler; 1.14 altında varsayılan OptiFine olur (Vanilla seçilirse Vanilla kalır)
   const fabricOk = (v) => { const p = String(v).split('.').map(Number); return p[0] > 1 || (p[0] === 1 && (p[1] || 0) >= 14); };
   let loader = fabricOk(def) ? 'fabric' : 'optifine';
@@ -455,8 +460,10 @@ async function newInstanceModal() {
   const segFabric = h('button', { class: 'sel', onclick: () => pick('fabric') }, 'Fabric (mod destekli)');
   const segOpti = h('button', { onclick: () => pick('optifine') }, 'OptiFine');
   const segVanilla = h('button', { onclick: () => pick('vanilla') }, 'Vanilla');
+  const segForge = h('button', { onclick: () => pick('forge') }, 'Forge');
   function pick(l) {
     loader = l;
+    segForge.classList.toggle('sel', l === 'forge');
     segFabric.classList.toggle('sel', l === 'fabric');
     segOpti.classList.toggle('sel', l === 'optifine');
     segVanilla.classList.toggle('sel', l === 'vanilla');
@@ -469,14 +476,18 @@ async function newInstanceModal() {
     segOpti.title = ok ? 'OptiFine seçeneği 1.14 öncesi sürümler içindir' : '';
     segFabric.style.display = ok ? '' : 'none';
     segOpti.style.display = ok ? 'none' : '';
-    if (loader !== 'vanilla') pick(ok ? 'fabric' : 'optifine');   // Vanilla bilinçli seçimdir, korunur
-    else pick('vanilla');
+    const fOk = forgeOk(ver.value);
+    segForge.disabled = !fOk;
+    segForge.title = fOk ? 'Forge modları için' : 'Bu sürüm için Forge yok';
+    if (loader === 'forge' && fOk) pick('forge');                  // Forge bilinçli seçimdir, korunur
+    else if (loader === 'vanilla') pick('vanilla');                // Vanilla bilinçli seçimdir, korunur
+    else pick(ok ? 'fabric' : 'optifine');
   }
   ver.addEventListener('change', syncLoader);
   syncLoader();
   const body = h('div', { class: 'form', style: 'padding:0;gap:16px' },
     h('label', {}, 'Ad', name), h('label', {}, 'Minecraft sürümü', ver),
-    h('label', {}, 'Loader', h('div', { class: 'seg' }, segFabric, segOpti, segVanilla)),
+    h('label', {}, 'Loader', h('div', { class: 'seg' }, segFabric, segOpti, segForge, segVanilla)),
     h('label', {}, 'Renk', swatchPicker(color, (i) => { color = i; })));
   openModal('Yeni instance', body, [
     { label: 'Vazgeç', fn: (close) => close() },
@@ -523,14 +534,34 @@ function thumb(item) {
 }
 
 async function pageInstance(id) {
-  const instances = await loadInstances();
+  // Önbellekteki instance bilgisiyle sekmeyi baştan seç, liste ve instance isteklerini AYNI ANDA gönder
+  const cached = (CACHE.instances || []).find((i) => i.id === id);
+  if (cached && !hasMods(cached) && instTab === 'mods') instTab = 'resourcepacks';
+  const listUrl = () => (instTab === 'worlds' ? `/instances/${id}/worlds` : `/instances/${id}/content?type=${instTab}`);
+  const [instances, first] = await Promise.all([loadInstances(), api(listUrl())]);
   const inst = instances.find((i) => i.id === id);
   if (!inst) { location.hash = '#/home'; return []; }
-  if (inst.loader !== 'fabric' && instTab === 'mods') instTab = 'resourcepacks';
+  let data = first;
+  if (!hasMods(inst) && instTab === 'mods') { instTab = 'resourcepacks'; data = await api(listUrl()); }
   const isWorld = instTab === 'worlds';
-  const { items } = await api(isWorld ? `/instances/${id}/worlds` : `/instances/${id}/content?type=${instTab}`);
+  const { items } = data;
+  // Arka planda dosya tanıma sürüyorsa (simge/başlık gelecek) birkaç saniye sonra listeyi sessizce tazele
+  if (data.identifying && !isWorld) {
+    const hash0 = location.hash, sig0 = JSON.stringify(items);
+    let tries = 0;
+    const again = async () => {
+      if (location.hash !== hash0 || ++tries > 4) return;
+      try {
+        const r = await api(listUrl() + '&poll=1');
+        if (location.hash !== hash0) return;
+        if (JSON.stringify(r.items) !== sig0) { route(); return; }
+        if (r.identifying) setTimeout(again, 2500);
+      } catch (_) { /* yoksay */ }
+    };
+    setTimeout(again, 2500);
+  }
 
-  const tabs = Object.entries(TYPES).filter(([k]) => !(k === 'mods' && inst.loader !== 'fabric'))
+  const tabs = Object.entries(TYPES).filter(([k]) => !(k === 'mods' && !hasMods(inst)))
     .map(([k, t]) => h('button', { class: 'tab' + (k === instTab ? ' active' : ''),
       onclick: () => { instTab = k; route(); } }, t.label, h('span', { class: 'tab-n' }, String(inst.counts[k]))));
 
@@ -798,14 +829,19 @@ function watchJob() {
 
 function modpackModal(hit, source) {
   const name = h('input', { class: 'input', value: hit.title.slice(0, 32), maxlength: 32 });
+  const loader = h('select', { class: 'select' },
+    h('option', { value: '' }, 'Otomatik (Fabric öncelikli)'),
+    h('option', { value: 'fabric' }, 'Fabric'),
+    h('option', { value: 'forge' }, 'Forge'));
   openModal(`${hit.title}`, h('div', { class: 'form-col' },
     h('p', { class: 'muted', style: 'margin:0;line-height:1.55' },
       `Paket (${SOURCES[source]}) yeni bir instance olarak kurulur: Minecraft sürümü, modlar ve ayarlar otomatik hazırlanır. ` +
-      'Dosya sayısına göre birkaç dakika sürebilir. Şimdilik yalnızca Fabric paketleri desteklenir.'),
-    h('label', { class: 'lbl' }, 'Instance adı', name)),
+      'Dosya sayısına göre birkaç dakika sürebilir. Fabric ve Forge paketleri desteklenir; paket seçtiğin loader\'ı sunmuyorsa kurulum hata verir.'),
+    h('label', { class: 'lbl' }, 'Instance adı', name),
+    h('label', { class: 'lbl' }, 'Mod yükleyici', loader)),
   [{ label: 'Vazgeç', fn: (c) => c() }, { label: 'Paketi kur', cls: 'primary', fn: async (c) => {
     try {
-      await api('/modpack/install', { method: 'POST', body: { source, project_id: hit.project_id, name: name.value } });
+      await api('/modpack/install', { method: 'POST', body: { source, project_id: hit.project_id, name: name.value, loader: loader.value } });
       c(); watchJob();
     } catch (e) { toast(e.message, 'error'); }
   } }]);
@@ -886,9 +922,9 @@ async function runSearch(reset) {
   }
   if (!pack) {
     if (!inst) { note(h('div', { class: 'panel empty', style: 'grid-column:1/-1' }, h('p', { class: 'muted' }, 'Önce ana sayfadan bir instance oluştur.'))); return; }
-    if (B.type === 'mod' && inst.loader !== 'fabric') {
+    if (B.type === 'mod' && !hasMods(inst)) {
       note(h('div', { class: 'notice', style: 'grid-column:1/-1' },
-        `Bu instance ${loaderName(inst.loader)}, mod kurulamaz. Resource pack / shader seçebilir ya da Fabric (1.14+) bir instance oluşturabilirsin.`));
+        `Bu instance ${loaderName(inst.loader)}, mod kurulamaz. Resource pack / shader seçebilir ya da Fabric (1.14+) ya da Forge bir instance oluşturabilirsin.`));
       return;
     }
   }
@@ -1160,7 +1196,7 @@ async function pageProject(arg, q) {
   const pack = info.type === 'modpack';
   const worldPage = info.type === 'world';
   const canInstall = !pack && inst && info.type in { mod: 1, resourcepack: 1, shader: 1, world: 1 }
-    && !(info.type === 'mod' && inst.loader !== 'fabric');
+    && !(info.type === 'mod' && !hasMods(inst));
   const cur = info.installed;
   const isCur = (v) => cur && (v.filename === cur.filename || (cur.version_id && String(cur.version_id) === String(v.id)));
   const curVer = cur ? (info.versions.find(isCur) || {}).name || cur.version || cur.filename : null;
@@ -1201,7 +1237,7 @@ async function pageProject(arg, q) {
     if (pack) return h('div', { class: 'panel empty' }, h('p', { class: 'muted' },
       'Modpack kurulurken Minecraft sürümüne uyan en yeni sürüm otomatik seçilir.'));
     if (!inst) return h('div', { class: 'panel empty' }, h('p', { class: 'muted' }, 'Sürümleri görmek için bir instance seç.'));
-    if (info.type === 'mod' && inst.loader !== 'fabric') return h('div', { class: 'notice' },
+    if (info.type === 'mod' && !hasMods(inst)) return h('div', { class: 'notice' },
       `Bu instance ${loaderName(inst.loader)}, mod kurulamaz. Fabric bir instance seç.`);
     if (!info.versions.length) return h('div', { class: 'panel empty' }, h('p', { class: 'muted' },
       `${inst.mc_version} için uyumlu sürüm bulunamadı.`));

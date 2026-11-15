@@ -154,7 +154,7 @@ h2 { margin: 28px 0 14px; font-size: 16px; color: var(--muted); font-weight: 600
 .swatch { width: 34px; height: 34px; border-radius: 11px; cursor: pointer; border: 2px solid transparent; }
 .swatch.sel { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.2); }
 .seg { display: inline-flex; background: rgba(0,0,0,.28); border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
-.seg button { border: 0; background: none; color: var(--muted); padding: 8px 18px; border-radius: 9px; font: inherit;
+.seg button { border: 0; background: none; color: var(--muted); padding: 8px 14px; border-radius: 9px; font: inherit;
   font-weight: 600; cursor: pointer; }
 .seg button:disabled { opacity: .4; cursor: not-allowed; }
 .seg button.sel { background: linear-gradient(135deg, var(--g2), var(--g3)); color: var(--on); }
@@ -984,3 +984,44 @@ h2::after { background: linear-gradient(90deg, rgba(var(--glow), .5), transparen
   .cards > .card { animation: none; }
   .card:hover .card-top .thumb { transform: none; }
 }
+
+
+/* ===== Çerçevesiz pencere kontrolleri ===== */
+.winctl { position: fixed; top: 0; right: 0; z-index: 9999; display: flex; height: 40px; align-items: stretch; }
+.winctl[hidden] { display: none; }
+.wc { width: 46px; border: 0; background: transparent; color: var(--muted, #9aa); cursor: pointer;
+  display: grid; place-items: center; transition: background .12s, color .12s; }
+.wc:hover { background: rgba(255,255,255,.1); color: var(--text, #fff); }
+.wc-close:hover { background: #e5484d; color: #fff; }
+.native .app { grid-template-rows: 96px 1fr 46px; }
+.native .topbar { padding: 40px 26px 0; align-items: center; height: 96px; box-sizing: border-box; }
+.pywebview-drag-region { -webkit-user-select: none; user-select: none; }
+.rz { position: fixed; z-index: 10000; display: none; }
+.native .rz { display: block; }
+.rz-n, .rz-s { left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+.rz-n { top: 0; } .rz-s { bottom: 0; }
+.rz-e, .rz-w { top: 8px; bottom: 8px; width: 5px; cursor: ew-resize; }
+.rz-e { right: 0; } .rz-w { left: 0; }
+.rz-ne, .rz-nw, .rz-se, .rz-sw { width: 10px; height: 10px; }
+.rz-ne { top: 0; right: 0; cursor: nesw-resize; } .rz-nw { top: 0; left: 0; cursor: nwse-resize; }
+.rz-se { bottom: 0; right: 0; cursor: nwse-resize; } .rz-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+
+
+/* ===== PERFORMANS: GPU'yu yoran efektler hafifletildi (görünüm aynı kalır) ===== */
+/* Sürekli yeniden boyanan katmanlar: blur'lü animasyonlu bloblar, aurora, hareketli grid, blend-mode */
+.bg .blob, .bg .b3 { filter: none !important; mix-blend-mode: normal !important; animation: none !important; will-change: auto; }
+.bg .b1 { background: radial-gradient(closest-side, rgba(var(--glow), .55), transparent) !important; }
+.bg .b2 { background: radial-gradient(closest-side, rgba(var(--glow2), .45), transparent) !important; }
+.bg .b3 { background: radial-gradient(closest-side, rgba(var(--glow2), .30), transparent) !important; }
+.bg .aurora { animation: none !important; filter: none !important; mix-blend-mode: normal !important; opacity: .4; }
+.bg .grid-floor { animation: none !important; }
+/* Büyük, kalıcı yüzeylerde backdrop-filter (en pahalı efekt) kapalı; modal/toast'ta kalır */
+.rail, .topbar, .statusbar, .panel, .card, .tile, .who, .searchbar, .src-seg { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.rail { background: rgba(0,0,0,.34); } .statusbar { background: rgba(0,0,0,.6); }
+/* Boyama gerektiren sonsuz animasyonlar kapalı (transform tabanlı olanlar kalır) */
+.rail-btn.active { animation: none !important; }
+.btn.primary, .btn.big.primary { animation: none !important; }
+.page-head h1, h1 { animation: none !important; }
+.statusbar .fill { animation: none !important; }
+/* Pencere odakta değilken hiçbir animasyon çalışmasın */
+.idle *, .idle *::before, .idle *::after { animation-play-state: paused !important; }
