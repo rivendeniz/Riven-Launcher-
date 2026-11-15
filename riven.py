@@ -54,10 +54,10 @@ except ImportError:  # keyring yoksa Microsoft oturumu hatırlanmaz
     keyring = None
 
 APP = "Riven Launcher"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 # Otomatik güncelleme: GitHub "kullanici/depo" adını yaz (ör. "riven/RivenLauncher").
 # Boş bırakırsan otomatik güncelleme kapalı kalır. Depo herkese açık (public) olmalı.
-UPDATE_REPO = ""
+UPDATE_REPO = "rivendeniz/Riven-Launcher-"
 UPDATE_ASSET_SUFFIX = "Setup.exe"
 DEFAULT_VERSION = "1.21.11"
 HOME_DIR = Path.home() / ".riven"
