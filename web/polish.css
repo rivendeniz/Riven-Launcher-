@@ -1,0 +1,138 @@
+/* Riven görsel cila katmanı: style.css'in üstüne biner, mevcut tema renklerini (--g, --glow) kullanır */
+:root { --ease: cubic-bezier(.22,1,.36,1); --radius: 22px; --glass: rgba(255,255,255,.05); --line: rgba(255,255,255,.085); }
+body { font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased; letter-spacing: .005em; }
+.bg::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+  background: radial-gradient(1200px 700px at 50% -10%, rgba(255,255,255,.06), transparent 60%),
+    radial-gradient(ellipse at 50% 120%, rgba(0,0,0,.55), transparent 60%); }
+.content { padding: 34px 44px 30px; scroll-behavior: smooth; }
+.content::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(var(--glow),.55), rgba(var(--glow),.25)); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+
+/* sol çubuk */
+.rail { background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(0,0,0,.28)); backdrop-filter: blur(26px) saturate(140%);
+  box-shadow: 1px 0 0 rgba(255,255,255,.04), 18px 0 50px rgba(0,0,0,.25); }
+.logo { transition: transform .4s var(--ease), box-shadow .4s; }
+.logo:hover { transform: rotate(-8deg) scale(1.08); box-shadow: 0 10px 34px rgba(var(--glow),.7); }
+.rail-btn, .rail-inst, .rail-add { transition: transform .3s var(--ease), box-shadow .3s, background .2s, border-radius .3s var(--ease); }
+.rail-inst:hover { transform: translateY(-2px) scale(1.06); border-radius: 18px; }
+.rail-btn:hover { transform: translateY(-2px) scale(1.05); }
+.rail-btn.active, .rail-inst.active { animation: ringPulse 2.8s ease-in-out infinite; }
+@keyframes ringPulse { 50% { box-shadow: 0 0 0 7px rgba(var(--glow),.1), 0 8px 28px rgba(var(--glow),.5); } }
+
+/* üst çubuk ve durum çubuğu */
+.topbar { padding: 0 34px; }
+.who, .fps-btn { transition: transform .25s var(--ease), background .2s, box-shadow .25s; }
+.who:hover, .fps-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.3); }
+.fps-btn { background: linear-gradient(135deg, rgba(var(--glow),.25), rgba(var(--glow),.08)); border: 1px solid rgba(var(--glow),.45); }
+.statusbar { background: rgba(0,0,0,.28); backdrop-filter: blur(18px); border-top: 1px solid var(--line); }
+.statusbar .fill { box-shadow: 0 0 14px rgba(var(--glow),.8); transition: width .5s var(--ease); }
+.dot.on { box-shadow: 0 0 0 0 rgba(var(--glow),.7); animation: dotPing 1.6s infinite; }
+@keyframes dotPing { to { box-shadow: 0 0 0 9px rgba(var(--glow),0); } }
+
+/* başlıklar */
+.page-head h1 { font-size: 34px; letter-spacing: -.02em; margin: 0 0 4px;
+  background: linear-gradient(120deg, #fff 30%, var(--g2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.page-head .sub { font-size: 15.5px; opacity: .8; }
+h2 { letter-spacing: .14em; font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 12px; }
+h2::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line), transparent); }
+.eyebrow { letter-spacing: .22em; color: var(--g2); font-weight: 700; }
+
+/* paneller: cam efekti + üst ışık çizgisi */
+.panel { position: relative; background: linear-gradient(160deg, rgba(255,255,255,.075), rgba(255,255,255,.03));
+  backdrop-filter: blur(20px) saturate(130%); border: 1px solid var(--line);
+  box-shadow: 0 1px 0 rgba(255,255,255,.07) inset, 0 18px 50px -20px rgba(0,0,0,.6); transition: transform .35s var(--ease), border-color .25s, box-shadow .35s; }
+.panel.row:hover, .panel.card:hover { transform: translateY(-2px); border-color: rgba(var(--glow),.4);
+  box-shadow: 0 1px 0 rgba(255,255,255,.08) inset, 0 22px 50px -18px rgba(var(--glow),.35); }
+.hero { overflow: hidden; padding: 30px; }
+.hero::before { content: ""; position: absolute; inset: -40% -10% auto auto; width: 70%; aspect-ratio: 1; pointer-events: none;
+  background: radial-gradient(closest-side, var(--c1), transparent 72%); opacity: .22; filter: blur(30px); }
+.hero h3 { font-size: 32px; letter-spacing: -.02em; margin: 6px 0 14px; }
+.stat { border-radius: 14px; background: rgba(255,255,255,.045); border: 1px solid var(--line); }
+
+/* instance kartları */
+.tile { transition: transform .4s var(--ease); }
+.tile-art { transition: transform .4s var(--ease), box-shadow .4s, border-radius .4s var(--ease);
+  box-shadow: 0 14px 34px -12px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.1) inset; }
+.tile:hover { transform: translateY(-6px); }
+.tile:hover .tile-art { box-shadow: 0 26px 50px -14px var(--c1), 0 0 0 1px rgba(255,255,255,.25) inset; border-radius: 32px; }
+.tile-name { font-weight: 700; margin-top: 12px; }
+.tile.new .tile-art { border: 2px dashed rgba(255,255,255,.22); background: rgba(255,255,255,.03); font-size: 44px; color: var(--muted); box-shadow: none; }
+.tile.new:hover .tile-art { color: var(--g2); border-color: var(--g2); }
+.tile-play { transition: transform .3s var(--ease), opacity .25s; }
+
+/* düğmeler */
+.btn { transition: transform .25s var(--ease), box-shadow .3s, background .2s, filter .2s; backdrop-filter: blur(10px); }
+.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 26px -10px rgba(0,0,0,.6); }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.98); }
+.btn.primary { position: relative; overflow: hidden; box-shadow: 0 10px 30px -8px rgba(var(--glow),.65), 0 1px 0 rgba(255,255,255,.35) inset; }
+.btn.primary::after { content: ""; position: absolute; inset: 0; transform: translateX(-120%);
+  background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.35), transparent 70%); transition: transform .8s var(--ease); }
+.btn.primary:hover::after { transform: translateX(120%); }
+.btn.big.primary { box-shadow: 0 14px 40px -8px rgba(var(--glow),.8), 0 1px 0 rgba(255,255,255,.4) inset; }
+
+/* sekmeler, girişler, seçiciler */
+.tab { transition: color .2s, background .25s, transform .25s var(--ease); }
+.tab:hover { transform: translateY(-1px); }
+.input, .select, textarea { transition: border-color .2s, box-shadow .25s, background .2s; }
+.input:focus, .select:focus, textarea:focus { outline: none; border-color: rgba(var(--glow),.75); background: rgba(255,255,255,.07);
+  box-shadow: 0 0 0 4px rgba(var(--glow),.16); }
+.seg button { transition: background .25s, color .2s, box-shadow .25s; }
+.seg button.sel { box-shadow: 0 6px 18px -6px rgba(var(--glow),.7); }
+.theme-dot { transition: transform .3s var(--ease), box-shadow .3s; }
+.theme-dot:hover { transform: scale(1.18); }
+.theme-dot.sel { box-shadow: 0 0 0 3px var(--bg2), 0 0 0 5px currentColor, 0 0 22px rgba(255,255,255,.35); }
+.lang-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 14px 16px; border-radius: 16px; background: rgba(255,255,255,.04); border: 1px solid var(--line); }
+.lang-seg { min-width: 220px; }
+.lang-seg button { flex: 1; font-weight: 700; padding: 9px 18px; }
+
+/* modal, bildirimler */
+.backdrop { backdrop-filter: blur(10px) saturate(120%); background: rgba(2,8,5,.6); animation: fadeIn .25s ease; }
+.modal { border-radius: 26px; border: 1px solid rgba(255,255,255,.12); animation: popIn .45s var(--ease);
+  box-shadow: 0 40px 90px -20px rgba(0,0,0,.8), 0 0 0 1px rgba(var(--glow),.12), 0 1px 0 rgba(255,255,255,.1) inset; }
+.toast { border-radius: 16px; backdrop-filter: blur(18px); border: 1px solid rgba(var(--glow),.35);
+  box-shadow: 0 16px 40px -12px rgba(0,0,0,.7), 0 0 28px -6px rgba(var(--glow),.45); animation: toastIn .5s var(--ease); }
+.toast.error { border-color: rgba(248,113,113,.5); box-shadow: 0 16px 40px -12px rgba(0,0,0,.7), 0 0 28px -6px rgba(248,113,113,.4); }
+@keyframes fadeIn { from { opacity: 0; } }
+@keyframes popIn { from { opacity: 0; transform: translateY(18px) scale(.94); } }
+@keyframes toastIn { from { opacity: 0; transform: translateX(30px) scale(.95); } }
+
+/* sayfa geçişi: kartlar sırayla belirir */
+.content.enter > * { animation: rise .7s var(--ease) both; }
+.content.enter > *:nth-child(2) { animation-delay: .06s; } .content.enter > *:nth-child(3) { animation-delay: .12s; }
+.content.enter > *:nth-child(4) { animation-delay: .18s; } .content.enter > *:nth-child(n+5) { animation-delay: .24s; }
+.content.enter .grid > * { animation: rise .6s var(--ease) both; }
+.content.enter .grid > *:nth-child(2) { animation-delay: .08s; } .content.enter .grid > *:nth-child(3) { animation-delay: .14s; }
+.content.enter .grid > *:nth-child(4) { animation-delay: .2s; } .content.enter .grid > *:nth-child(n+5) { animation-delay: .26s; }
+@keyframes rise { from { opacity: 0; transform: translateY(22px); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* ================= V36: FPS butonu, şeffaf istatistikler, zengin arka plan ================= */
+/* FPS butonu: açık yeşil (seçili tema rengine göre değişir), cam parlaması ve ışık süpürmesi */
+.topbar .fps-btn {
+  position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 18px 8px 14px; border-radius: 999px; font-weight: 800; letter-spacing: 1.1px; color: var(--on);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--g2) 45%, #fff) 0%, var(--g2) 58%, color-mix(in srgb, var(--g2) 78%, var(--g)) 100%);
+  border: 1px solid color-mix(in srgb, var(--g2) 45%, #fff);
+  box-shadow: 0 1px 0 rgba(255,255,255,.55) inset, 0 -2px 6px rgba(0,0,0,.12) inset,
+              0 8px 22px -6px rgba(var(--glow2), .75), 0 0 20px rgba(var(--glow2), .32);
+  transition: transform .25s var(--ease), box-shadow .3s, filter .2s;
+}
+.topbar .fps-btn svg { filter: drop-shadow(0 0 4px rgba(255,255,255,.55)); animation: boltPulse 2.4s ease-in-out infinite; }
+.topbar .fps-btn::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; transform: translateX(-130%);
+  background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.65) 50%, transparent 65%);
+  animation: fpsShine 4.2s ease-in-out infinite;
+}
+.topbar .fps-btn:hover { transform: translateY(-2px) scale(1.04); filter: brightness(1.07) saturate(1.05);
+  box-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 12px 28px -6px rgba(var(--glow2), .9), 0 0 28px rgba(var(--glow2), .5); }
+.topbar .fps-btn:active { transform: scale(.96); }
+@keyframes fpsShine { 0%, 55% { transform: translateX(-130%); } 80%, 100% { transform: translateX(130%); } }
+@keyframes boltPulse { 50% { transform: scale(1.18) rotate(-6deg); } }
+
+/* Hero istatistikleri: kutusuz, tamamen şeffaf; yalnızca ince bir vurgu çizgisi */
+.hero .stats { gap: 14px 34px; }
+.stat, .hero .stat { background: transparent !important; border: 0 !important; box-shadow: none !important;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important; border-radius: 0; padding: 0 0 0 12px;
+  border-left: 2px solid rgba(var(--glow2), .55) !important; }
+.stat-l { color: rgba(255,255,255,.62); }
+.stat-v { text-shadow: 0 2px 14px rgba(0,0,0,.45); }

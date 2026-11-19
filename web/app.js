@@ -20,11 +20,11 @@ function h(tag, props, ...kids) {
     else if (k === 'style') el.style.cssText = v;
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else if (v === true) el.setAttribute(k, '');
-    else if (v !== false && v != null) el.setAttribute(k, v);
+    else if (v !== false && v != null) el.setAttribute(k, (k === 'title' || k === 'placeholder') ? tr(String(v)) : v);
   }
   for (const kid of kids.flat(Infinity)) {
     if (kid == null || kid === false) continue;
-    el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    el.append(kid.nodeType ? kid : document.createTextNode(tr(String(kid))));
   }
   return el;
 }
@@ -60,7 +60,7 @@ const ICONS = {
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   upload: '<path d="M12 16V5M7 9l5-5 5 5M5 20h14"/>',
   package: '<path d="M21 8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/>',
-  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+  gamepad: '<rect x="2.5" y="7" width="19" height="11" rx="4"/><path d="M7.5 10.5v4M5.5 12.5h4"/><circle cx="15.5" cy="11.5" r="1" fill="currentColor" stroke="none"/><circle cx="18" cy="13.8" r="1" fill="currentColor" stroke="none"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M14 9l2 2"/>',
 };
@@ -161,13 +161,14 @@ function appendConsole(text) {
 /* Otomatik güncelleme çubuğu */
 function renderUpdateBar(u) {
   let bar = document.getElementById('update-bar');
-  const active = u && ['downloading', 'waiting', 'installing', 'available'].includes(u.state);
+  const active = u && ['downloading', 'waiting', 'installing', 'available', 'error'].includes(u.state);
   if (!active) { if (bar) bar.remove(); return; }
   if (!bar) { bar = h('div', { id: 'update-bar', class: 'update-bar' }); document.body.append(bar); }
   const pct = Math.round((u.progress || 0) * 100);
   const text = u.state === 'downloading' ? `Yeni sürüm ${u.version} indiriliyor... %${pct}`
     : u.state === 'installing' ? `Sürüm ${u.version} kuruluyor, launcher yeniden açılacak...`
     : u.state === 'waiting' ? `Sürüm ${u.version} hazır, oyun kapanınca güncellenecek.`
+    : u.state === 'error' ? `Otomatik güncelleme başarısız: ${u.message || 'bilinmeyen hata'} (30 dk sonra tekrar denenecek)`
     : (u.message || `Yeni sürüm ${u.version} mevcut.`);
   bar.textContent = '';
   bar.append(h('span', {}, text));
@@ -180,6 +181,7 @@ async function pollOnce() {
     const s = await api('/state?since=' + logIdx);
     S = s;
     logIdx = s.log_idx;
+    if (s.lang && s.lang !== LANG) setLang(s.lang, false);
     if (s.theme && (s.theme !== currentTheme || (s.theme === 'custom' && s.accent !== currentAccent))) applyTheme(s.theme, s.accent);
     for (const l of s.logs) {
       logLines.push(l.t);
@@ -231,7 +233,7 @@ function buildStatusbar() {
 }
 
 function renderStatus() {
-  $('#sb-text').textContent = S.status;
+  $('#sb-text').textContent = tr(S.status);
   $('#sb-fill').style.width = Math.round((S.progress || 0) * 100) + '%';
   $('#sb-dot').className = 'dot' + ((S.running.length || S.preparing) ? ' on' : '');
   $('#sb-run').textContent = S.running.length ? `${S.running.length} oyun açık` : '';
@@ -239,7 +241,7 @@ function renderStatus() {
 
 /* ---------------------------------------------------------------- yönlendirme */
 const NAV = [['browse', 'compass', 'Keşfet (Modrinth / CurseForge)'], ['console', 'terminal', 'Konsol'],
-  ['chat', 'chat', 'Mesajlar'], ['account', 'user', 'Hesap ve Discord']];
+  ['afk', 'gamepad', 'AFK Bölgesi'], ['account', 'user', 'Hesap ve Discord']];
 let currentRoute = { name: 'home' };
 let routeSeq = 0;
 let lastRendered = null;
@@ -292,8 +294,7 @@ function renderRail() {
       : null,
     h('div', { class: 'rail-bottom' }, NAV.map(([name, ic, label]) =>
       h('button', { class: 'rail-btn' + (currentRoute.name === name ? ' active' : ''), title: label,
-        onclick: () => { location.hash = '#/' + name; } }, icon(ic, 21),
-      name === 'chat' && chatUnreadTotal() ? h('span', { class: 'rail-badge' }, String(Math.min(chatUnreadTotal(), 9))) : null)))
+        onclick: () => { location.hash = '#/' + name; } }, icon(ic, 21))))
   ].filter(Boolean));  // null verilirse tarayıcı "null" yazısı çiziyordu
   if (RAIL_OPEN) $('#rail .rail-instances').scrollTop = prevTop;
 }
@@ -311,7 +312,7 @@ async function route() {
   const my = ++routeSeq;
   const view = $('#view');
   const top = view.scrollTop;
-  CHAT.onUpdate = null;
+  if (currentRoute.name !== 'afk') AFKGame.stop();   // sayfadan çıkınca oyun durur
   renderRail();
   consoleEl = null;
   let nodes;
@@ -322,7 +323,7 @@ async function route() {
       case 'browse': nodes = await pageBrowse(currentRoute.q); break;
       case 'project': nodes = await pageProject(currentRoute.arg, currentRoute.q); break;
       case 'console': nodes = pageConsole(); break;
-      case 'chat': nodes = await pageChat(); break;
+      case 'afk': nodes = AFKGame.page(); break;
       case 'account': nodes = await pageAccount(); break;
       default: location.hash = '#/home'; return;
     }
@@ -829,19 +830,14 @@ function watchJob() {
 
 function modpackModal(hit, source) {
   const name = h('input', { class: 'input', value: hit.title.slice(0, 32), maxlength: 32 });
-  const loader = h('select', { class: 'select' },
-    h('option', { value: '' }, 'Otomatik (Fabric öncelikli)'),
-    h('option', { value: 'fabric' }, 'Fabric'),
-    h('option', { value: 'forge' }, 'Forge'));
   openModal(`${hit.title}`, h('div', { class: 'form-col' },
     h('p', { class: 'muted', style: 'margin:0;line-height:1.55' },
       `Paket (${SOURCES[source]}) yeni bir instance olarak kurulur: Minecraft sürümü, modlar ve ayarlar otomatik hazırlanır. ` +
-      'Dosya sayısına göre birkaç dakika sürebilir. Fabric ve Forge paketleri desteklenir; paket seçtiğin loader\'ı sunmuyorsa kurulum hata verir.'),
-    h('label', { class: 'lbl' }, 'Instance adı', name),
-    h('label', { class: 'lbl' }, 'Mod yükleyici', loader)),
+      'Dosya sayısına göre birkaç dakika sürebilir. Şimdilik yalnızca Fabric paketleri desteklenir.'),
+    h('label', { class: 'lbl' }, 'Instance adı', name)),
   [{ label: 'Vazgeç', fn: (c) => c() }, { label: 'Paketi kur', cls: 'primary', fn: async (c) => {
     try {
-      await api('/modpack/install', { method: 'POST', body: { source, project_id: hit.project_id, name: name.value, loader: loader.value } });
+      await api('/modpack/install', { method: 'POST', body: { source, project_id: hit.project_id, name: name.value } });
       c(); watchJob();
     } catch (e) { toast(e.message, 'error'); }
   } }]);
@@ -1634,185 +1630,6 @@ async function discordCard() {
       } }, 'Kaydet'), status));
 }
 
-/* ---------------------------------------------------------------- mesajlaşma */
-const CHAT = { configured: false, me: '', msgs: [], last: 0, active: null, timer: null, first: true,
-  busy: false, error: '', onUpdate: null };
-const chatOther = (m) => (m.from.toLowerCase() === CHAT.me.toLowerCase() ? m.to : m.from);
-const chatReadKey = () => 'riven_chat_read_' + CHAT.me.toLowerCase();
-function chatReadMap() {
-  try { return JSON.parse(localStorage.getItem(chatReadKey()) || '{}') || {}; } catch (_) { return {}; }
-}
-function chatSaveRead(map) { try { localStorage.setItem(chatReadKey(), JSON.stringify(map)); } catch (_) { /* depolama kapalı */ } }
-function chatUnread(name) {
-  const read = chatReadMap()[name.toLowerCase()] || 0;
-  return CHAT.msgs.filter((m) => m.from.toLowerCase() === name.toLowerCase() && m.id > read).length;
-}
-const chatUnreadTotal = () => {
-  const names = new Set(CHAT.msgs.filter((m) => m.from.toLowerCase() !== CHAT.me.toLowerCase()).map((m) => m.from));
-  return [...names].reduce((a, n) => a + chatUnread(n), 0);
-};
-function chatMarkRead(name) {
-  const ids = CHAT.msgs.filter((m) => m.from.toLowerCase() === name.toLowerCase()).map((m) => m.id);
-  if (!ids.length) return;
-  const map = chatReadMap();
-  map[name.toLowerCase()] = Math.max(map[name.toLowerCase()] || 0, ...ids);
-  chatSaveRead(map);
-}
-function chatChanged() {
-  renderRail();
-  if (CHAT.onUpdate) CHAT.onUpdate();
-}
-
-async function chatPoll() {
-  if (!CHAT.configured || CHAT.busy) return;
-  CHAT.busy = true;
-  try {
-    const r = await api('/chat/poll?since=' + CHAT.last);
-    CHAT.error = '';
-    if (r.me !== CHAT.me) { // hesap değişti: başka kullanıcının mesajları
-      Object.assign(CHAT, { me: r.me, msgs: [], last: 0, first: true });
-      return;
-    }
-    const known = new Set(CHAT.msgs.map((m) => m.id));
-    const fresh = r.messages.filter((m) => !known.has(m.id));
-    CHAT.msgs.push(...fresh);
-    CHAT.last = Math.max(CHAT.last, r.last_id || 0);
-    if (CHAT.first) {
-      CHAT.first = false;
-      if (localStorage.getItem(chatReadKey()) === null) { // ilk kurulum: eski mesajlar okunmuş sayılır
-        const map = {};
-        for (const m of CHAT.msgs) if (m.from.toLowerCase() !== CHAT.me.toLowerCase()) map[m.from.toLowerCase()] = Math.max(map[m.from.toLowerCase()] || 0, m.id);
-        chatSaveRead(map);
-      }
-    } else {
-      for (const m of fresh) {
-        if (m.from.toLowerCase() === CHAT.me.toLowerCase()) continue;
-        const watching = currentRoute.name === 'chat' && CHAT.active && CHAT.active.toLowerCase() === m.from.toLowerCase();
-        if (watching) chatMarkRead(m.from);
-        else toast(`${m.from}: ${m.text.length > 60 ? m.text.slice(0, 60) + '…' : m.text}`);
-      }
-    }
-    if (fresh.length || CHAT.msgs.length === 0) chatChanged();
-  } catch (e) {
-    const changed = CHAT.error !== e.message;
-    CHAT.error = e.message;
-    if (changed && CHAT.onUpdate) CHAT.onUpdate();
-  } finally { CHAT.busy = false; }
-}
-
-function chatStart() {
-  CHAT.configured = true;
-  if (!CHAT.timer) CHAT.timer = setInterval(chatPoll, 4000);
-  chatPoll();
-}
-function chatStop() {
-  CHAT.configured = false;
-  clearInterval(CHAT.timer);
-  Object.assign(CHAT, { timer: null, msgs: [], last: 0, first: true, active: null, error: '' });
-}
-async function chatBoot() {
-  try {
-    const st = await api('/chat/status');
-    CHAT.me = st.me;
-    if (st.configured) chatStart();
-  } catch (_) { /* mesajlaşma isteğe bağlı */ }
-}
-
-function chatSetupPanel(st) {
-  const server = h('input', { class: 'input', placeholder: 'http://192.168.1.20:8780', value: st.server || '', spellcheck: 'false' });
-  const pass = h('input', { class: 'input', type: 'password', autocomplete: 'off', placeholder: 'Sunucu şifresi (varsa)' });
-  const go = h('button', { class: 'btn primary', onclick: async () => {
-    if (!server.value.trim()) { toast('Sunucu adresini yaz.', 'error'); return; }
-    go.disabled = true; go.textContent = 'Bağlanılıyor…';
-    try {
-      await api('/chat/setup', { method: 'POST', body: { server: server.value.trim(), password: pass.value } });
-      toast('Mesaj sunucusuna bağlandı'); chatStop(); await chatBoot(); route();
-    } catch (e) { toast(e.message, 'error'); go.disabled = false; go.textContent = 'Bağlan'; }
-  } }, 'Bağlan');
-  return h('div', { class: 'panel setup', style: 'grid-column:1/-1' },
-    h('div', { class: 'empty-orb' }, icon('chat', 30)),
-    h('h3', {}, 'Mesaj sunucusuna bağlan'),
-    h('p', { class: 'muted', style: 'margin:0 0 6px;line-height:1.55;max-width:560px' },
-      'Mesajlar, arkadaşlarınla ortak kullandığınız küçük bir Riven mesaj sunucusu üzerinden gider. ' +
-      'Sunucuyu biri (sen ya da bir arkadaşın) kurar: launcher klasöründeki chat_server/Sunucu_Baslat.bat dosyasını çalıştırması yeterli. ' +
-      'Sunucu penceresinde yazan adresi gir (aynı bilgisayardaysa http://127.0.0.1:8780; 0.0.0.0 yazma). Sonra herkes aynı adresi ve şifreyi buraya girer. Premium da korsan da fark etmez; ' +
-      'mesaj atabilmen için karşıdaki kişiyi Hesap sayfasından arkadaş olarak eklemiş olman gerekir.'),
-    h('div', { class: 'form-col' }, server, pass, h('div', { class: 'row-actions' }, go)));
-}
-
-async function pageChat() {
-  const st = await api('/chat/status');
-  CHAT.me = st.me;
-  const head = (sub, extra) => h('header', { class: 'page-head' },
-    h('div', {}, h('h1', {}, 'Mesajlar'), h('p', { class: 'sub' }, sub)), extra || null);
-  if (!st.configured) return [head('Arkadaşlarınla launcher içinden yaz.'), chatSetupPanel(st)];
-  if (!CHAT.timer) chatStart();
-  const friends = (await api('/friends')).friends;
-  const leave = h('button', { class: 'btn small', onclick: async () => {
-    try { await api('/chat/reset', { method: 'POST' }); chatStop(); route(); } catch (e) { toast(e.message, 'error'); }
-  } }, 'Sunucudan ayrıl');
-  const header = head(`${st.me} olarak bağlısın • ${st.server}`, leave);
-  if (!friends.length) {
-    return [header, h('div', { class: 'panel empty' }, h('p', { class: 'muted' },
-      'Henüz arkadaşın yok. Hesap ve Discord sayfasındaki "Riven arkadaşların" bölümünden ekle; adı mesaj sunucusundaki adıyla aynı olmalı.'),
-    h('button', { class: 'btn primary', onclick: () => { location.hash = '#/account'; } }, 'Arkadaş ekle'))];
-  }
-  if (!CHAT.active || !friends.some((f) => f.name === CHAT.active)) {
-    const withUnread = friends.find((f) => chatUnread(f.name) > 0);
-    CHAT.active = (withUnread || friends[0]).name;
-  }
-
-  const list = h('div', { class: 'chat-list panel' });
-  const title = h('div', { class: 'chat-title' });
-  const msgs = h('div', { class: 'chat-msgs' });
-  const err = h('div', { class: 'notice', style: 'margin:0 14px 10px;display:none' });
-  const input = h('input', { class: 'input', placeholder: 'Mesaj yaz…', maxlength: 500, autocomplete: 'off' });
-  const send = h('button', { class: 'btn primary', onclick: async () => {
-    const text = input.value.trim();
-    if (!text) return;
-    send.disabled = true;
-    try {
-      const r = await api('/chat/send', { method: 'POST', body: { to: CHAT.active, text } });
-      input.value = '';
-      if (!CHAT.msgs.some((m) => m.id === r.message.id)) CHAT.msgs.push(r.message);
-      renderConv(true);
-    } catch (e) { toast(e.message, 'error'); } finally { send.disabled = false; input.focus(); }
-  } }, 'Gönder');
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send.click(); } });
-
-  function renderList() {
-    list.replaceChildren(...friends.map((f) => {
-      const n = chatUnread(f.name);
-      const last = [...CHAT.msgs].reverse().find((m) => chatOther(m).toLowerCase() === f.name.toLowerCase());
-      return h('button', { class: 'chat-item' + (f.name === CHAT.active ? ' active' : ''),
-        onclick: () => { CHAT.active = f.name; chatMarkRead(f.name); renderList(); renderConv(true); chatChanged(); } },
-      h('div', { class: 'thumb', style: `background:${grad(hashColor(f.name))}` }, initial(f.name)),
-      h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, f.name),
-        h('div', { class: 'row-sub' }, last ? last.text : (f.premium === false ? 'Korsan hesap' : 'Premium hesap'))),
-      n ? h('span', { class: 'chat-dot' }, n > 9 ? '9+' : String(n)) : null);
-    }));
-  }
-  function renderConv(forceBottom) {
-    const near = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
-    const mine = (m) => m.from.toLowerCase() === CHAT.me.toLowerCase();
-    const convo = CHAT.msgs.filter((m) => chatOther(m).toLowerCase() === CHAT.active.toLowerCase()).sort((a, b) => a.id - b.id);
-    chatMarkRead(CHAT.active);
-    title.textContent = CHAT.active;
-    msgs.replaceChildren(...(convo.length ? convo.map((m) => h('div', { class: 'msg ' + (mine(m) ? 'mine' : 'theirs') },
-      h('div', { class: 'msg-text' }, m.text),
-      h('div', { class: 'msg-time' }, new Date(m.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))))
-      : [h('p', { class: 'muted', style: 'margin:auto;text-align:center' }, `${CHAT.active} ile henüz mesajın yok. İlk mesajı sen yaz.`)]));
-    err.style.display = CHAT.error ? '' : 'none';
-    err.textContent = CHAT.error;
-    if (forceBottom || near) msgs.scrollTop = msgs.scrollHeight;
-  }
-  CHAT.onUpdate = () => { if (!list.isConnected) { CHAT.onUpdate = null; return; } renderList(); renderConv(false); };
-  renderList();
-  setTimeout(() => { renderConv(true); input.focus(); }, 0);
-  const conv = h('div', { class: 'chat-conv panel' }, title, msgs, err, h('div', { class: 'chat-input' }, input, send));
-  return [header, h('div', { class: 'chat-wrap' }, list, conv)];
-}
-
 /* ---------------------------------------------------------------- açılış */
 (async function boot() {
   renderRail();
@@ -1823,7 +1640,6 @@ async function pageChat() {
   startScene();
   showLogin();
   await instancesReady;
-  chatBoot();
   window.addEventListener('hashchange', route);
   window.addEventListener('pagehide', () => { api('/bye', { method: 'POST', keepalive: true }).catch(() => {}); });
   schedulePoll();

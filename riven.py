@@ -15,7 +15,6 @@ Token'lar düz dosyaya yazılmaz; refresh token sistem kimlik deposunda (keyring
 """
 import base64
 import ctypes
-import ctypes.wintypes
 import hashlib
 import inspect
 import json
@@ -55,7 +54,7 @@ except ImportError:  # keyring yoksa Microsoft oturumu hatırlanmaz
     keyring = None
 
 APP = "Riven Launcher"
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 # Otomatik güncelleme: GitHub "kullanici/depo" adını yaz (ör. "riven/RivenLauncher").
 # Boş bırakırsan otomatik güncelleme kapalı kalır. Depo herkese açık (public) olmalı.
 UPDATE_REPO = "rivendeniz/Riven-Launcher-"
@@ -771,7 +770,7 @@ SORT_KEYS = ("relevance", "downloads", "updated", "newest")
 def modrinth_search(query, ptype, inst, offset, sort="", mc=""):
     facets = [[f"project_type:{ptype}"]]
     if ptype == "modpack":
-        facets.append(["categories:fabric", "categories:forge"])  # Fabric veya Forge paketleri (aynı grup = VEYA)
+        facets.append(["categories:fabric"])  # launcher yalnızca Fabric paketlerini kurabilir
         if mc:
             facets.append([f"versions:{mc}"])
     elif inst:
@@ -1233,24 +1232,6 @@ def find_installed_forge(installed_ids, mc_version):
     return found[-1] if found else None
 
 
-def forge_libs_ok(version_id):
-    """Forge sürüm JSON'undaki kütüphaneler diskte tam mı? (yarım kalmış kurulumu yakalar)"""
-    try:
-        vj = json.loads((Path(SHARED_DIR) / "versions" / version_id / f"{version_id}.json").read_text(encoding="utf-8"))
-        for lib in vj.get("libraries", []):
-            art = (lib.get("downloads") or {}).get("artifact") or {}
-            path = art.get("path")
-            if not path or not art.get("url"):
-                continue   # yükleyicinin üreteceği dosyalar (client jar vb.) atlanır
-            f = Path(SHARED_DIR) / "libraries" / path
-            if not f.is_file() or f.stat().st_size < 1024 and art.get("size", 0) > 1024:
-                add_log(f"Forge kütüphanesi eksik/bozuk: {path}")
-                return False
-        return True
-    except Exception:
-        return True
-
-
 def install_forge(mc, cb=None):
     cb = cb or {}
     if cb.get("setStatus"):
@@ -1267,21 +1248,7 @@ def install_forge(mc, cb=None):
     kwargs = {"callback": cb}
     if java:
         kwargs["java"] = java
-    for attempt in range(3):
-        try:
-            mll.forge.install_forge_version(fv, SHARED_DIR, **kwargs)
-            break
-        except Exception as exc:
-            # Yükleyici "has the wrong Checksum" derse bozuk/yarım inen kütüphaneyi sil ve tekrar dene
-            m = re.search(r"([A-Za-z]:[\\/][^\r\n]*?\.jar) has the wrong checksum", str(exc), re.I)
-            if not m or attempt == 2:
-                raise
-            bad = Path(m.group(1))
-            add_log(f"Bozuk kütüphane siliniyor, yeniden denenecek: {bad}")
-            try:
-                bad.unlink()
-            except Exception:
-                raise exc
+    mll.forge.install_forge_version(fv, SHARED_DIR, **kwargs)
     return mll.forge.forge_to_installed_version(fv)
 
 
@@ -1471,14 +1438,17 @@ def apply_update(setup):
     """Kurulumu sessizce çalıştırır, bitince launcher'ı yeniden açar. Çağıran süreç çıkar."""
     exe = Path(sys.executable)
     managed = (exe.parent / "unins000.exe").is_file()   # Setup.exe ile kurulmuş mu?
-    flags = 0x08000000 | 0x00000008 | 0x00000200       # NO_WINDOW | DETACHED | NEW_GROUP
+    flags = 0x08000000 | 0x00000200                     # NO_WINDOW | NEW_GROUP (DETACHED ile birlikte NO_WINDOW yok sayilir)
     if managed:
         bat = _update_dir() / "apply.bat"
+        log = _update_dir() / "setup.log"
+        # ping: launcher kapanana kadar bekler (timeout komutu konsolsuz calismaz)
         bat.write_text(
-            "@echo off\r\ntimeout /t 2 /nobreak >nul\r\n"
-            f'"{setup}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS\r\n'
+            "@echo off\r\nping -n 4 127.0.0.1 >nul\r\n"
+            f'"{setup}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /LOG="{log}"\r\n'
             f'start "" "{exe}"\r\n', encoding="utf-8")
-        subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True)
+        subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:   # portable kopya: sihirbazı normal aç
         subprocess.Popen([str(setup)], creationflags=0x00000008, close_fds=True)
     time.sleep(1.0)
@@ -1566,7 +1536,7 @@ def launch_worker(inst, repair):
                 installed.add(mc)
             if inst["loader"] == "forge":
                 local_forge = find_installed_forge(installed, mc)
-                if local_forge and not repair and forge_libs_ok(local_forge):
+                if local_forge and not repair:
                     version_id = local_forge
                 else:
                     try:
@@ -1860,6 +1830,7 @@ def r_state(m, q, b):
         "preparing": PREPARING["id"], "running": list(RUNNING),
         "account": account_info(), "logs": logs, "log_idx": idx,
         "theme": CFG.get("theme", "green"), "accent": CFG.get("accent", ""),
+        "lang": CFG.get("lang", "tr"),
         "update": dict(UPDATE), "app_version": APP_VERSION,
     }
 
@@ -2480,6 +2451,16 @@ def r_theme(m, q, b):
     return {"theme": theme, "accent": CFG.get("accent", "")}
 
 
+@route("POST", "/lang")
+def r_lang(m, q, b):
+    lang = b.get("lang")
+    if lang not in ("tr", "en"):
+        raise ApiError("Geçersiz dil.")
+    CFG["lang"] = lang
+    save_cfg()
+    return {"lang": lang}
+
+
 @route("GET", "/diagnose")
 def r_diagnose(m, q, b):
     return diagnose_network()
@@ -2519,151 +2500,6 @@ def r_friends_remove(m, q, b):
     items = [f for f in friends_list() if f["uuid"] != uuid_]
     save_friends(items)
     return {"friends": items}
-
-
-# --------------------------------------------------------------------- Mesajlaşma
-def chat_cfg():
-    c = CFG.get("chat")
-    return c if isinstance(c, dict) else {}
-
-
-def chat_me():
-    """Mesajlarda kullanılacak ad: Microsoft girişi varsa gerçek ad, yoksa çevrimdışı ad."""
-    return account_info()["name"]
-
-
-def chat_normalize_server(raw):
-    raw = str(raw or "").strip().rstrip("/")
-    if raw and "://" not in raw:
-        raw = "http://" + raw
-    parsed = urllib.parse.urlparse(raw)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise ApiError("Sunucu adresi geçersiz. Örnek: http://192.168.1.20:8780")
-    host = parsed.hostname
-    # 0.0.0.0 / :: "dinleme adresi"dir, bağlanılacak adres değildir (WinError 10049). Aynı PC için 127.0.0.1 kullan.
-    if host in ("0.0.0.0", "::", "0", "[::]"):
-        host = "127.0.0.1"
-    if ":" in host:  # IPv6
-        host = f"[{host}]"
-    port = f":{parsed.port}" if parsed.port else ""
-    return f"{parsed.scheme}://{host}{port}"
-
-
-def chat_call(method, path, body=None, user=None, timeout=10):
-    c = chat_cfg()
-    if not c.get("server"):
-        raise ApiError("Mesaj sunucusu ayarlanmamış.")
-    headers = {"User-Agent": UA, "Accept": "application/json"}
-    if c.get("password"):
-        headers["X-Chat-Key"] = c["password"]
-    if user:
-        headers["X-Chat-User"] = user[0]
-        headers["X-Chat-Token"] = user[1]
-    data = None
-    if body is not None:
-        data = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(c["server"] + path, data=data, headers=headers, method=method)
-    try:
-        with open_url(req, timeout) as resp:
-            return json.load(resp)
-    except urllib.error.HTTPError as exc:
-        try:
-            msg = json.loads(exc.read(2000).decode("utf-8", "replace")).get("error")
-        except Exception:
-            msg = None
-        raise ApiError(msg or f"Mesaj sunucusu hatası ({exc.code}).", 502 if exc.code >= 500 else 400)
-    except ValueError:
-        raise ApiError("Adres bir Riven mesaj sunucusu gibi görünmüyor.", 502)
-    except Exception as exc:
-        raise ApiError(f"Mesaj sunucusuna ulaşılamadı: {explain_net_error(exc)}", 502)
-
-
-def chat_user():
-    """(ad, token). İlk kullanımda sunucuya kaydolur; token yalnızca bu bilgisayarda tutulur."""
-    me = chat_me()
-    c = chat_cfg()
-    tokens = c.get("tokens") if isinstance(c.get("tokens"), dict) else {}
-    token = tokens.get(me.lower())
-    if not token:
-        try:
-            token = chat_call("POST", "/register", {"name": me})["token"]
-        except ApiError as exc:
-            if "zaten alınmış" in exc.msg:
-                raise ApiError(f"\"{me}\" adı bu sunucuda zaten kayıtlı ve anahtarı bu bilgisayarda yok. "
-                               "Hesap sayfasından başka bir ad kullan ya da sunucu sahibinden kaydı sildirmesini iste.")
-            raise
-        tokens[me.lower()] = token
-        CFG["chat"] = {**c, "tokens": tokens}
-        save_cfg()
-    return me, token
-
-
-def chat_status():
-    c = chat_cfg()
-    return {"configured": bool(c.get("server")), "server": c.get("server", ""),
-            "has_password": bool(c.get("password")), "me": chat_me()}
-
-
-@route("GET", "/chat/status")
-def r_chat_status(m, q, b):
-    return chat_status()
-
-
-@route("POST", "/chat/setup")
-def r_chat_setup(m, q, b):
-    server = chat_normalize_server(b.get("server"))
-    password = str(b.get("password", ""))[:100]
-    old = chat_cfg()
-    CFG["chat"] = {"server": server, "password": password,
-                   "tokens": old.get("tokens", {}) if old.get("server") == server else {}}
-    try:
-        chat_call("GET", "/ping")
-        chat_user()
-    except ApiError:
-        CFG["chat"] = old
-        raise
-    save_cfg()
-    return chat_status()
-
-
-@route("POST", "/chat/reset")
-def r_chat_reset(m, q, b):
-    CFG.pop("chat", None)
-    save_cfg()
-    return chat_status()
-
-
-@route("GET", "/chat/poll")
-def r_chat_poll(m, q, b):
-    try:
-        since = max(0, int(qs(q, "since", "0")))
-    except ValueError:
-        since = 0
-    me, token = chat_user()
-    data = chat_call("GET", f"/poll?since={since}", user=(me, token))
-    friends = {f["name"].lower() for f in friends_list()}
-    out, hidden = [], 0
-    for msg in data.get("messages", []):
-        other = msg["to"] if msg["from"].lower() == me.lower() else msg["from"]
-        if other.lower() in friends:
-            out.append({"id": msg["id"], "from": msg["from"], "to": msg["to"],
-                        "text": str(msg["text"])[:500], "ts": msg["ts"]})
-        else:
-            hidden += 1
-    return {"me": me, "messages": out, "hidden": hidden, "last_id": data.get("last_id", since)}
-
-
-@route("POST", "/chat/send")
-def r_chat_send(m, q, b):
-    to = str(b.get("to", "")).strip()
-    text = str(b.get("text", "")).strip()
-    if not any(f["name"].lower() == to.lower() for f in friends_list()):
-        raise ApiError("Önce bu kişiyi arkadaş olarak eklemelisin.")
-    if not text:
-        raise ApiError("Mesaj boş.")
-    me, token = chat_user()
-    return chat_call("POST", "/send", {"to": to, "text": text[:500]}, user=(me, token))
 
 
 @route("POST", "/skin/upload")  # giriş ekranı ve eski arayüz: kütüphaneye ekler
@@ -3028,8 +2864,7 @@ def cf_search(query, ptype, inst, offset, sort="", mc=""):
     if version:
         params["gameVersion"] = version
     if ptype in ("mod", "modpack"):
-        if ptype == "mod":   # modpack aramasında loader filtresi yok: hem Fabric hem Forge paketleri gelsin
-            params["modLoaderType"] = CF_LOADER_IDS.get(inst_mod_loader(inst) or "fabric", CF_FABRIC)
+        params["modLoaderType"] = CF_LOADER_IDS.get(inst_mod_loader(inst) or "fabric", CF_FABRIC) if ptype == "mod" else CF_FABRIC
     data = cf_request("/mods/search", params)
     add_log(f"CurseForge arama: sorgu='{query}' tür={ptype} sürüm={version or '-'} -> {len(data.get('data', []))} sonuç")
     if not data.get("data") and "modLoaderType" in params and offset == 0:
@@ -3462,17 +3297,7 @@ def run_downloads(tasks, label, workers=4):
     def wrap(item):
         title, fn = item
         try:
-            for attempt in range(3):   # geçici ağ hatalarında dosyayı 3 kereye kadar yeniden dene
-                try:
-                    fn()
-                    break
-                except ManualDownload:
-                    raise
-                except Exception as exc:
-                    msg = str(getattr(exc, "msg", exc))
-                    if attempt == 2 or any(k in msg for k in ("bulunamadı", "güvensiz", "eksik", "Geçersiz")):
-                        raise
-                    time.sleep(1.5 * (attempt + 1))
+            fn()
         except ManualDownload as exc:
             with lock:
                 JOB["manual"].append({"title": exc.title, "url": exc.url})
@@ -3562,7 +3387,7 @@ def pack_name(requested, fallback):
     return name or "Modpack"
 
 
-def install_mrpack(path, requested_name, fallback_name, want=""):
+def install_mrpack(path, requested_name, fallback_name):
     with zipfile.ZipFile(path) as zf:
         try:
             index = json.loads(zf.read("modrinth.index.json"))
@@ -3572,12 +3397,9 @@ def install_mrpack(path, requested_name, fallback_name, want=""):
         mc = str(deps.get("minecraft", ""))
         if not re.fullmatch(r"[0-9A-Za-z._\-]{1,32}", mc):
             raise ApiError("Paketin Minecraft sürümü anlaşılamadı.")
-        has = [n for n, k in (("fabric", "fabric-loader"), ("forge", "forge")) if k in deps]
-        if not has and any(k in deps for k in ("neoforge", "quilt-loader")):
-            raise ApiError("Bu paket NeoForge/Quilt kullanıyor. Riven Fabric ve Forge paketlerini kurar.")
-        loader = (want if want in has else has[0]) if has else "vanilla"
-        if loader == "forge" and not forge_available(mc):
-            raise ApiError(f"{mc} için Forge sürümü bulunamadı.")
+        if any(k in deps for k in ("forge", "neoforge", "quilt-loader")):
+            raise ApiError("Bu paket Forge/NeoForge/Quilt kullanıyor. Riven şimdilik yalnızca Fabric paketlerini kurar.")
+        loader = "fabric" if "fabric-loader" in deps else "vanilla"
         entries = [e for e in index.get("files") or []
                    if isinstance(e, dict) and (e.get("env") or {}).get("client") != "unsupported"]
         inst = create_instance(pack_name(requested_name, index.get("name") or fallback_name), mc, loader,
@@ -3598,20 +3420,14 @@ def install_mrpack(path, requested_name, fallback_name, want=""):
     return inst
 
 
-def mr_modpack_job(pid, name, want=""):
+def mr_modpack_job(pid, name):
     job_update(message="Paket bilgisi alınıyor…", progress=0.02)
     proj = http_json(f"{MODRINTH}/project/{urllib.parse.quote(pid)}")
-    wanted = [want] if want in ("fabric", "forge") else ["fabric", "forge"]
     versions = http_json(f"{MODRINTH}/project/{urllib.parse.quote(pid)}/version?"
-                         + urllib.parse.urlencode({"loaders": json.dumps(wanted)}))
+                         + urllib.parse.urlencode({"loaders": json.dumps(["fabric"])}))
     if not versions:
-        raise ApiError(f"Bu paket {wanted[0].capitalize() if len(wanted) == 1 else 'Fabric/Forge'} için sürüm sunmuyor.")
-    if len(wanted) > 1:   # seçim yoksa Fabric öncelikli, yoksa Forge
-        fab = [v for v in versions if "fabric" in (v.get("loaders") or [])]
-        versions = fab or versions
+        raise ApiError("Bu paket Fabric için sürüm sunmuyor. Riven şimdilik yalnızca Fabric paketlerini kurar.")
     version = ([v for v in versions if v.get("version_type") == "release"] or versions)[0]
-    if want not in ("fabric", "forge"):
-        want = "fabric" if "fabric" in (version.get("loaders") or []) else "forge"
     files = version.get("files") or []
     info = next((f for f in files if f.get("primary")), files[0] if files else None)
     if not info or not str(info.get("filename", "")).lower().endswith(".mrpack"):
@@ -3625,7 +3441,7 @@ def mr_modpack_job(pid, name, want=""):
         want = (info.get("hashes") or {}).get("sha512")
         if not want or want.lower() != got["sha512"]:
             raise ApiError("Paket doğrulaması (hash) başarısız.")
-        inst = install_mrpack(tmp, name, proj.get("title"), want)
+        inst = install_mrpack(tmp, name, proj.get("title"))
         job_update(message="Simgeler ve mod bilgileri hazırlanıyor…", progress=0.98)
         set_pack_icon(inst, cdn_icon(proj.get("icon_url")), {"cdn.modrinth.com"})
         identify_unindexed(inst)
@@ -3639,21 +3455,15 @@ def mr_modpack_job(pid, name, want=""):
 CF_CLASS_DIR = {6: ("mods", (".jar",)), 12: ("resourcepacks", (".zip",)), 6552: ("shaderpacks", (".zip",))}
 
 
-def cf_modpack_job(pid, name, want=""):
+def cf_modpack_job(pid, name):
     job_update(message="Paket bilgisi alınıyor…", progress=0.02)
     proj = cf_request(f"/mods/{int(pid)}")["data"]
     page = cf_page_url(proj)
-    names = {"fabric": "Fabric", "forge": "Forge"}
-    wanted = [want] if want in names else ["fabric", "forge"]
     files = [f for f in cf_request(f"/mods/{int(pid)}/files", {"pageSize": 30}).get("data", [])
-             if f.get("isAvailable", True)
-             and any(names[w] in (f.get("gameVersions") or []) for w in wanted)]
+             if f.get("isAvailable", True) and "Fabric" in (f.get("gameVersions") or [])]
     if not files:
-        raise ApiError(f"Bu paket {names[wanted[0]] if len(wanted) == 1 else 'Fabric/Forge'} için sürüm sunmuyor.")
+        raise ApiError("Bu paket Fabric için sürüm sunmuyor. Riven şimdilik yalnızca Fabric paketlerini kurar.")
     files.sort(key=lambda f: f.get("fileDate", ""), reverse=True)
-    if len(wanted) > 1:   # seçim yoksa Fabric öncelikli
-        fab = [f for f in files if "Fabric" in (f.get("gameVersions") or [])]
-        files = fab or files
     pack = ([f for f in files if f.get("releaseType") == 1] or files)[0]
     url = cf_download_url(pack, pid)
     if not url:
@@ -3679,16 +3489,13 @@ def cf_modpack_job(pid, name, want=""):
             loaders = mcinfo.get("modLoaders") or []
             primary = str(next((l.get("id") for l in loaders if l.get("primary")),
                                loaders[0].get("id") if loaders else ""))
-            if primary and not primary.startswith(("fabric-", "forge-")):
-                raise ApiError("Bu paket NeoForge/Quilt gibi desteklenmeyen bir loader kullanıyor. Riven Fabric ve Forge paketlerini kurar.")
-            pack_loader = "forge" if primary.startswith("forge-") else "fabric" if primary else "vanilla"
-            if pack_loader == "forge" and not forge_available(mc):
-                raise ApiError(f"{mc} için Forge sürümü bulunamadı.")
+            if primary and not primary.startswith("fabric-"):
+                raise ApiError("Bu paket Fabric dışı bir loader kullanıyor. Riven şimdilik yalnızca Fabric paketlerini kurar.")
             refs = [(int(f["projectID"]), int(f["fileID"])) for f in man.get("files") or []
                     if isinstance(f, dict) and str(f.get("projectID", "")).isdigit()
                     and str(f.get("fileID", "")).isdigit()]
             inst = create_instance(pack_name(name, man.get("name") or proj.get("name")), mc,
-                                   pack_loader, color=random.randrange(8))
+                                   "fabric" if primary else "vanilla", color=random.randrange(8))
             JOB["instance"] = inst["id"]
             game_dir = instance_dir(inst)
             try:
@@ -4175,16 +3982,14 @@ def r_open_link(m, q, b):
 def r_modpack_install(m, q, b):
     source, pid = b.get("source"), str(b.get("project_id", ""))
     name = str(b.get("name", "")).strip()[:32]
-    want = str(b.get("loader") or "").lower()
-    want = want if want in ("fabric", "forge") else ""
     if source == "modrinth":
-        start_job(mr_modpack_job, project_id_ok(pid), name, want)
+        start_job(mr_modpack_job, project_id_ok(pid), name)
     elif source == "curseforge":
         if not re.fullmatch(r"\d{1,10}", pid):
             raise ApiError("Geçersiz proje.")
         if not cf_key():
             raise ApiError("CurseForge için API anahtarı gerekli.")
-        start_job(cf_modpack_job, pid, name, want)
+        start_job(cf_modpack_job, pid, name)
     else:
         raise ApiError("Geçersiz kaynak.")
     return {"started": True}
@@ -4232,7 +4037,10 @@ SECURITY_HEADERS = {
 }
 STATIC = {"/app.js": ("app.js", "text/javascript; charset=utf-8"),
           "/extras.js": ("extras.js", "text/javascript; charset=utf-8"),
+          "/afk.js": ("afk.js", "text/javascript; charset=utf-8"),
           "/style.css": ("style.css", "text/css; charset=utf-8"),
+          "/polish.css": ("polish.css", "text/css; charset=utf-8"),
+          "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
           "/favicon-32.png": ("favicon-32.png", "image/png"),
           "/favicon-180.png": ("favicon-180.png", "image/png"),
           "/favicon-512.png": ("favicon-512.png", "image/png")}
@@ -4598,41 +4406,6 @@ class WindowApi:
         self._win.move(int(x), int(y))
 
 
-def round_window_corners(win, wapi=None, radius=10):
-    """Çerçevesiz pencerenin köşelerini hafifçe yuvarla (Windows 11: DWM, Windows 10: pencere bölgesi).
-    Büyütülmüşken (maximize) yuvarlama kapatılır. Hata olursa sessizce atlanır."""
-    if not sys.platform.startswith("win"):
-        return
-    try:
-        form = getattr(win, "native", None)
-        if form is None:
-            return
-        hwnd = int(form.Handle.ToInt64())
-        maxed = bool(wapi and wapi._max)
-        dwm_ok = False
-        try:   # Windows 11: DWMWA_WINDOW_CORNER_PREFERENCE (33): 2 = yuvarlak, 1 = yuvarlama yok
-            val = ctypes.c_int(1 if maxed else 2)
-            dwm_ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                ctypes.c_void_p(hwnd), 33, ctypes.byref(val), ctypes.sizeof(val)) == 0
-        except Exception:
-            dwm_ok = False
-        if dwm_ok and sys.getwindowsversion().build >= 22000:
-            ctypes.windll.user32.SetWindowRgn(ctypes.c_void_p(hwnd), None, True)   # DWM zaten yuvarlıyor
-            return
-        user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32   # Windows 10: bölge ile yuvarla
-        if maxed:
-            user32.SetWindowRgn(ctypes.c_void_p(hwnd), None, True)
-            return
-        rect = ctypes.wintypes.RECT()
-        user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(rect))
-        w, h = rect.right - rect.left, rect.bottom - rect.top
-        gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
-        rgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2)
-        user32.SetWindowRgn(ctypes.c_void_p(hwnd), ctypes.c_void_p(rgn), True)
-    except Exception as exc:
-        add_log(f"Köşe yuvarlama uygulanamadı: {exc}")
-
-
 def open_native_window(url, httpd):
     """Arayüzü tarayıcı olmadan, kendi uygulama penceresinde aç (pywebview).
     Başarılıysa True döner (pencere kapanınca çağrılan taraf çıkmalıdır)."""
@@ -4680,16 +4453,6 @@ def open_native_window(url, httpd):
         try:
             win.events.shown += set_form_icon
             win.events.loaded += set_form_icon
-        except Exception:
-            pass
-        try:
-            def _round(*_a):
-                round_window_corners(win, wapi)
-            win.events.shown += _round
-            win.events.loaded += _round
-            win.events.resized += _round
-            win.events.maximized += _round
-            win.events.restored += _round
         except Exception:
             pass
         start_kw = dict(private_mode=False, storage_path=str(HOME_DIR / "webview"))

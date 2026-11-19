@@ -52,52 +52,117 @@ function themePanel() {
   }
   picker.addEventListener('input', () => setCustom(picker.value));
   hex.addEventListener('input', () => setCustom(hex.value.startsWith('#') ? hex.value : '#' + hex.value));
-  return h('div', { class: 'panel form' }, h('h3', { class: 'section-title' }, 'Görünüm'),
+  const langSeg = h('div', { class: 'seg lang-seg' }, [['tr', 'Türkçe'], ['en', 'English']].map(([code, label]) =>
+    h('button', { class: code === LANG ? 'sel' : '', onclick: () => setLang(code, true) }, label)));
+  return h('div', { class: 'panel form' }, h('h3', { class: 'section-title' }, 'Görünüm ve dil'),
+    h('div', { class: 'lang-row' }, h('div', {}, h('div', { class: 'row-title' }, 'Dil'),
+      h('div', { class: 'row-sub' }, 'Arayüz dilini seç')), langSeg),
     h('p', { class: 'muted', style: 'margin:0;line-height:1.5' },
       'Arayüz her zaman koyu kalır. Hazır bir renk seç ya da sağdaki kutudan istediğin rengi bul; arka plan o renge göre ayarlanır.'),
     h('div', { class: 'themes' }, dots, wrap));
 }
 
-/* ------------------------------------------------------------ hareketli blok manzarası */
+/* ------------------------------------------------------------ hareketli blok manzarası (V36) */
 function startScene() {
   const cv = document.getElementById('scene');
   if (!cv) return;
   const ctx = cv.getContext('2d');
-  let W = 0, H = 0, tick = 0, last = 0, rgb = [34, 197, 94], rgb2 = [74, 222, 128];
-  const L = [{ s: .12, b: 46, y: .60, a: .16, k: .30 }, { s: .22, b: 38, y: .69, a: .26, k: .22 },
-    { s: .38, b: 30, y: .79, a: .42, k: .16 }, { s: .62, b: 24, y: .89, a: .70, k: .10 }];
-  const P = Array.from({ length: 48 }, () => ({ x: Math.random(), y: Math.random(), z: Math.random() * 2 + 1,
-    v: Math.random() * .0012 + .0004, p: Math.random() * 6.3 }));
+  let W = 0, H = 0, tick = 0, last = 0, rgb = [34, 197, 94], rgb2 = [74, 222, 128], shoot = null, nextShoot = 260;
+  // uzaktan yakına 4 katman: hız, blok boyu, yükseklik, doluluk, koyuluk
+  const L = [{ s: .10, b: 56, y: .56, a: .30, k: .34, amp: .20 }, { s: .20, b: 44, y: .66, a: .38, k: .28, amp: .18 },
+    { s: .36, b: 34, y: .77, a: .50, k: .22, amp: .15 }, { s: .60, b: 26, y: .88, a: .70, k: .15, amp: .12 }];
+  const STARS = Array.from({ length: 90 }, () => ({ x: Math.random(), y: Math.random() * .58, z: Math.random() * 1.6 + .8, p: Math.random() * 6.3, f: Math.random() * .05 + .015 }));
+  const FLY = Array.from({ length: 34 }, () => ({ x: Math.random(), y: .45 + Math.random() * .55, z: Math.random() * 2 + 1.5,
+    v: Math.random() * .0009 + .0003, p: Math.random() * 6.3, w: Math.random() * .0035 + .001 }));
+  const glow = document.createElement('canvas'); glow.width = glow.height = 32;   // yumuşak ışık sprite'ı
   const size = () => { W = cv.width = innerWidth; H = cv.height = innerHeight; };
-  size();
-  addEventListener('resize', size);
-  const col = (c, k, a) => `rgba(${Math.round(c[0] * k)},${Math.round(c[1] * k)},${Math.round(c[2] * k)},${a})`;
-  const hgt = (c, i) => Math.sin(c * .21 + i * 2.1) * .55 + Math.sin(c * .067 + i) * .45;
+  size(); addEventListener('resize', size);
+  const rgba = (c, k, a) => `rgba(${Math.round(c[0] * k)},${Math.round(c[1] * k)},${Math.round(c[2] * k)},${a})`;
+  const mix = (c, t) => c.map((v) => Math.round(v + (255 - v) * t));
+  const hgt = (c, i) => Math.sin(c * .21 + i * 2.1) * .5 + Math.sin(c * .067 + i) * .35 + Math.sin(c * .43 + i * .7) * .15;
+  function makeGlow() {
+    const g = glow.getContext('2d'), r = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+    r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(.25, rgba(rgb2, 1, .85)); r.addColorStop(1, rgba(rgb2, 1, 0));
+    g.clearRect(0, 0, 32, 32); g.fillStyle = r; g.fillRect(0, 0, 32, 32);
+  }
+  makeGlow();
   function draw() {
     tick++;
     if (tick % 40 === 1) {
       const get = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).split(',').map(Number);
       const a = get('--glow'), b = get('--glow2');
+      const ch = (a.length === 3 && !a.some(isNaN) && a.join() !== rgb.join()) || (b.length === 3 && !b.some(isNaN) && b.join() !== rgb2.join());
       if (a.length === 3 && !a.some(isNaN)) rgb = a;
       if (b.length === 3 && !b.some(isNaN)) rgb2 = b;
+      if (ch) makeGlow();
     }
     ctx.clearRect(0, 0, W, H);
-    const u = H / 900;
+    const u = H / 900, t = tick;
+    // yıldızlar
+    STARS.forEach((s) => {
+      const a = .25 + .55 * (.5 + .5 * Math.sin(t * s.f + s.p));
+      ctx.fillStyle = `rgba(${mix(rgb2, .55).join(',')},${a})`;
+      const z = Math.max(1.5, s.z * u * 1.6); ctx.fillRect(Math.round(s.x * W), Math.round(s.y * H), z, z);
+    });
+    // ay / güneş: pikselli çekirdek + yumuşak hale
+    const ox = W * .80, oy = H * .17 + Math.sin(t * .004) * 6 * u, or = 46 * u;
+    const halo = ctx.createRadialGradient(ox, oy, 0, ox, oy, or * 7);
+    halo.addColorStop(0, rgba(rgb2, 1, .30)); halo.addColorStop(.35, rgba(rgb, 1, .10)); halo.addColorStop(1, rgba(rgb, 1, 0));
+    ctx.fillStyle = halo; ctx.fillRect(ox - or * 7, oy - or * 7, or * 14, or * 14);
+    // ışık huzmeleri (orbdan aşağıya)
+    for (let i = 0; i < 4; i++) {
+      const ang = Math.PI * (.62 + i * .075) + Math.sin(t * .006 + i * 1.7) * .035, len = H * 1.1, wd = (60 + i * 26) * u;
+      const ex = ox + Math.cos(ang) * len, ey = oy + Math.sin(ang) * len;
+      const g = ctx.createLinearGradient(ox, oy, ex, ey);
+      g.addColorStop(0, rgba(rgb2, 1, .13 - i * .02)); g.addColorStop(1, rgba(rgb2, 1, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(ox, oy);
+      ctx.lineTo(ex - Math.sin(ang) * wd, ey + Math.cos(ang) * wd); ctx.lineTo(ex + Math.sin(ang) * wd, ey - Math.cos(ang) * wd);
+      ctx.closePath(); ctx.fill();
+    }
+    const q = Math.max(6, Math.round(or * .62));
+    ctx.fillStyle = `rgba(${mix(rgb2, .75).join(',')},.92)`; ctx.fillRect(Math.round(ox - q), Math.round(oy - q), q * 2, q * 2);
+    ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillRect(Math.round(ox - q), Math.round(oy - q), q * 2, Math.max(2, q * .22));
+    // kayan yıldız
+    if (!shoot && --nextShoot <= 0) { shoot = { x: Math.random() * .6 * W, y: Math.random() * .25 * H, l: 0 }; nextShoot = 420 + Math.random() * 480; }
+    if (shoot) {
+      shoot.l += 14 * u; const sx = shoot.x + shoot.l, sy = shoot.y + shoot.l * .42, tl = 110 * u;
+      const g = ctx.createLinearGradient(sx, sy, sx - tl, sy - tl * .42);
+      g.addColorStop(0, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.strokeStyle = g; ctx.lineWidth = Math.max(1.5, 2 * u); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - tl, sy - tl * .42); ctx.stroke();
+      if (shoot.l > 360 * u) shoot = null;
+    }
+    // arazi katmanları: tek yol + dikey gradyan dolgu + parlayan üst kenar
     L.forEach((l, i) => {
-      const bs = Math.max(8, Math.round(l.b * u)), off = tick * l.s * u * .5;
-      for (let c = Math.floor(off / bs); c * bs - off < W + bs; c++) {
-        const x = c * bs - off;
-        const top = Math.round((H * l.y - (hgt(c, i) * .5 + .5) * H * .17) / bs) * bs;
-        ctx.fillStyle = col(rgb, l.k, l.a); ctx.fillRect(x, top, bs + 1, H - top);
-        ctx.fillStyle = col(rgb2, .75, l.a * .85); ctx.fillRect(x, top, bs + 1, Math.max(2, bs * .22));
+      const bs = Math.max(8, Math.round(l.b * u)), off = t * l.s * u * .5, c0 = Math.floor(off / bs);
+      const baseY = H * l.y, amp = H * l.amp;
+      ctx.beginPath(); ctx.moveTo(c0 * bs - off, H);
+      let minTop = H;
+      for (let c = c0; c * bs - off < W + bs; c++) {
+        const x = c * bs - off, top = Math.round((baseY - (hgt(c, i) * .5 + .5) * amp) / bs) * bs;
+        if (top < minTop) minTop = top;
+        ctx.lineTo(x, top); ctx.lineTo(x + bs, top);
       }
+      ctx.lineTo(W + bs * 2, H); ctx.closePath();
+      const g = ctx.createLinearGradient(0, minTop, 0, H);
+      g.addColorStop(0, rgba(rgb, l.k * 1.7, l.a)); g.addColorStop(.55, rgba(rgb, l.k, l.a * .75)); g.addColorStop(1, rgba(rgb, l.k * .35, l.a * .35));
+      ctx.fillStyle = g; ctx.fill();
+      ctx.strokeStyle = rgba(rgb2, 1, Math.min(.55, l.a * .8)); ctx.lineWidth = Math.max(1.5, 2 * u);
+      ctx.beginPath();
+      for (let c = c0; c * bs - off < W + bs; c++) {
+        const x = c * bs - off, top = Math.round((baseY - (hgt(c, i) * .5 + .5) * amp) / bs) * bs;
+        if (c === c0) ctx.moveTo(x, top); else ctx.lineTo(x, top);
+        ctx.lineTo(x + bs, top);
+      }
+      ctx.stroke();
     });
-    P.forEach((p) => {
-      p.y -= p.v;
-      if (p.y < -.02) { p.y = 1.02; p.x = Math.random(); }
-      ctx.fillStyle = `rgba(${rgb2.join(',')},${Math.max(.05, .3 + .45 * Math.sin(tick * .04 + p.p))})`;
-      ctx.fillRect(p.x * W, p.y * H, p.z * u * 2.2, p.z * u * 2.2);
+    // ateş böcekleri: yumuşak ışıklı, süzülen parçacıklar
+    FLY.forEach((p) => {
+      p.y -= p.v; p.x += Math.sin(t * p.w * 6 + p.p) * .0006;
+      if (p.y < .25) { p.y = 1.02; p.x = Math.random(); }
+      const a = Math.max(.08, .35 + .65 * Math.sin(t * .03 + p.p)) * Math.min(1, (1.02 - p.y) * 5), s = p.z * u * 9;
+      ctx.globalAlpha = Math.min(.9, a); ctx.drawImage(glow, p.x * W - s / 2, p.y * H - s / 2, s, s);
     });
+    ctx.globalAlpha = 1;
   }
   const loop = (now) => {
     requestAnimationFrame(loop);
