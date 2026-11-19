@@ -1,4 +1,4 @@
-﻿﻿; Riven Launcher kurulum sihirbazi (Inno Setup 6.3 veya daha yeni)
+﻿; Riven Launcher kurulum sihirbazi (Inno Setup 6.3 veya daha yeni)
 ;
 ; Animasyonlu karsilama: acilis sahnesi + yazan yazi, canli kurulum ilerleme animasyonu.
 ; Gorseller installer_assets\ klasorunde (installer_assets\gen_assets.py ile yeniden uretilir).
