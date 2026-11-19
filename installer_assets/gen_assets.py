@@ -305,7 +305,7 @@ STAGES = [
     (18, "Dosyalar yerleştiriliyor…"),
     (45, "Motor ve modlar ayarlanıyor…"),
     (72, "Son dokunuşlar yapılıyor…"),
-    (97, "Hazır! Özgürlük seni bekliyor."),
+    (97, "Kurulum tamamlandı."),
 ]
 def stage_msg(p):
     m = STAGES[0][1]
@@ -408,7 +408,7 @@ def prog_frame(i):
     img.alpha_composite(fr)
 
     # yuvarlak kose disini beyaza boya (sayfa arka plani)
-    out = Image.new("RGB", (PW, PH), (255, 255, 255))
+    out = Image.new("RGB", (PW, PH), BG0)   # kosegen disi = kurulum sahnesi rengi
     out.paste(img.convert("RGB"), (0, 0), panel_mask)
     return out
 

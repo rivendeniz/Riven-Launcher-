@@ -168,7 +168,7 @@ function renderUpdateBar(u) {
   const text = u.state === 'downloading' ? `Yeni sürüm ${u.version} indiriliyor... %${pct}`
     : u.state === 'installing' ? `Sürüm ${u.version} kuruluyor, launcher yeniden açılacak...`
     : u.state === 'waiting' ? `Sürüm ${u.version} hazır, oyun kapanınca güncellenecek.`
-    : u.state === 'error' ? `Otomatik güncelleme başarısız: ${u.message || 'bilinmeyen hata'} (30 dk sonra tekrar denenecek)`
+    : u.state === 'error' ? `Otomatik güncelleme başarısız: ${u.message || 'bilinmeyen hata'} (10 dk sonra tekrar denenecek)`
     : (u.message || `Yeni sürüm ${u.version} mevcut.`);
   bar.textContent = '';
   bar.append(h('span', {}, text));

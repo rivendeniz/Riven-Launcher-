@@ -54,7 +54,7 @@ except ImportError:  # keyring yoksa Microsoft oturumu hatırlanmaz
     keyring = None
 
 APP = "Riven Launcher"
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 # Otomatik güncelleme: GitHub "kullanici/depo" adını yaz (ör. "riven/RivenLauncher").
 # Boş bırakırsan otomatik güncelleme kapalı kalır. Depo herkese açık (public) olmalı.
 UPDATE_REPO = "rivendeniz/Riven-Launcher-"
@@ -1385,8 +1385,15 @@ def find_update():
         return None
     url = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/vnd.github+json"})
-    with open_url(req, 15) as resp:
-        rel = json.load(resp)
+    try:
+        with open_url(req, 15) as resp:
+            rel = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:      # depoda henüz yayın (release) yok: hata değil
+            return None
+        if exc.code in (403, 429):
+            raise ApiError("GitHub istek sınırı doldu, daha sonra tekrar denenecek.")
+        raise ApiError(f"Güncelleme sunucusu hata verdi ({exc.code}).")
     tag = str(rel.get("tag_name") or "")
     if _ver_tuple(tag) <= _ver_tuple(APP_VERSION):
         return None
@@ -1438,32 +1445,53 @@ def apply_update(setup):
     """Kurulumu sessizce çalıştırır, bitince launcher'ı yeniden açar. Çağıran süreç çıkar."""
     exe = Path(sys.executable)
     managed = (exe.parent / "unins000.exe").is_file()   # Setup.exe ile kurulmuş mu?
-    flags = 0x08000000 | 0x00000200                     # NO_WINDOW | NEW_GROUP (DETACHED ile birlikte NO_WINDOW yok sayilir)
+    flags = 0x08000000 | 0x00000200                     # NO_WINDOW | NEW_GROUP
+    # PyInstaller: eski sürecin ortam değişkenleri yeni exe'ye geçerse yeni sürüm eski
+    # (silinen) klasörü kullanmaya çalışır ve açılmaz. Bunu sıfırlatıyoruz.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI") and k != "_MEIPASS2"}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     if managed:
         bat = _update_dir() / "apply.bat"
         log = _update_dir() / "setup.log"
-        # ping: launcher kapanana kadar bekler (timeout komutu konsolsuz calismaz)
+        # Launcher tamamen kapanana kadar bekle, kurulumu çalıştır, bitince launcher'ı aç.
+        # Kurulum başarısız olsa bile (eski sürüm yerinde kalır) launcher yine açılır.
         bat.write_text(
-            "@echo off\r\nping -n 4 127.0.0.1 >nul\r\n"
+            "@echo off\r\n"
+            "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
+            "ping -n 6 127.0.0.1 >nul\r\n"
             f'"{setup}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /LOG="{log}"\r\n'
-            f'start "" "{exe}"\r\n', encoding="utf-8")
-        subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True,
+            "ping -n 3 127.0.0.1 >nul\r\n"
+            f'start "" "{exe}"\r\n'
+            f'del "{setup}" >nul 2>&1\r\n', encoding="utf-8")
+        subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True, env=env,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:   # portable kopya: sihirbazı normal aç
-        subprocess.Popen([str(setup)], creationflags=0x00000008, close_fds=True)
+        subprocess.Popen([str(setup)], creationflags=0x00000008, close_fds=True, env=env)
     time.sleep(1.0)
     os._exit(0)
 
 
+def _cleanup_old_updates(keep=None):
+    try:
+        for f in _update_dir().glob("RivenLauncher-Setup-*.*"):
+            if keep is None or f != keep:
+                f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def update_cycle(auto=True):
-    with UPDATE_LOCK:
-        if UPDATE["state"] in ("downloading", "installing"):
+    if not UPDATE_LOCK.acquire(blocking=False):   # zaten bir kontrol/indirme sürüyor
+        return
+    try:
+        if UPDATE["state"] in ("downloading", "installing", "waiting"):
             return
         try:
             UPDATE.update(state="checking", message="", progress=0.0)
             found = find_update()
             if not found:
-                UPDATE.update(state="idle")
+                UPDATE.update(state="idle", message="")
+                _cleanup_old_updates()
                 return
             version, dl, sha = found
             UPDATE.update(version=version)
@@ -1473,9 +1501,10 @@ def update_cycle(auto=True):
             if not auto:
                 UPDATE.update(state="available")
                 return
-            UPDATE.update(state="downloading")
+            UPDATE.update(state="downloading", progress=0.0)
             add_log(f"Yeni launcher sürümü bulundu: {version}, indiriliyor...")
             setup = download_update(version, dl, sha)
+            _cleanup_old_updates(keep=setup)
             # Oyun açıkken kesme; oyun bitince kur
             while RUNNING or PREPARING["id"]:
                 UPDATE.update(state="waiting", message="Oyun kapanınca güncellenecek.")
@@ -1485,8 +1514,11 @@ def update_cycle(auto=True):
             time.sleep(1.5)   # arayüz mesajı görsün
             apply_update(setup)
         except Exception as exc:
-            UPDATE.update(state="error", message=str(exc))
-            add_log(f"Otomatik güncelleme başarısız: {exc}")
+            msg = exc.msg if isinstance(exc, ApiError) else str(exc)
+            UPDATE.update(state="error", message=msg)
+            add_log(f"Otomatik güncelleme başarısız: {msg}")
+    finally:
+        UPDATE_LOCK.release()
 
 
 def update_worker():
@@ -1494,8 +1526,7 @@ def update_worker():
     while True:
         if UPDATE_REPO:
             update_cycle(auto=True)
-        time.sleep(1800)
-
+        time.sleep(600 if UPDATE["state"] == "error" else 1800)
 
 
 def launch_worker(inst, repair):
