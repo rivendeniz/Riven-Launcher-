@@ -39,6 +39,22 @@ import webbrowser
 import zipfile
 import zlib
 from concurrent.futures import ThreadPoolExecutor
+
+# Riven oyun arayüzü motoru (tüm paket dokuları pure-Python stdlib ile üretilir)
+try:
+    from riven_ui import build_pack as riven_build_pack
+    from riven_ui import pack_signature as riven_pack_signature
+    from riven_ui import build_info as riven_build_info
+    from riven_ui import DEFAULT_ACCENT as RIVEN_DEFAULT_ACCENT
+    from riven_ui import PRESETS as RIVEN_PRESETS
+    RIVEN_UI_OK = True
+except Exception as _e:
+    RIVEN_UI_OK = False
+    RIVEN_DEFAULT_ACCENT = "#22c55e"
+    RIVEN_PRESETS = ()
+    def riven_build_pack(*a, **k): raise RuntimeError("riven_ui yok: " + str(_e))
+    def riven_pack_signature(*a, **k): return ""
+    def riven_build_info(): return {"version": 0, "presets": [], "default": "#22c55e"}
 from datetime import datetime
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -55,7 +71,7 @@ except ImportError:  # keyring yoksa Microsoft oturumu hatırlanmaz
     keyring = None
 
 APP = "Riven Launcher"
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.7.0"
 # Otomatik güncelleme: GitHub "kullanici/depo" adını yaz (ör. "riven/RivenLauncher").
 # Boş bırakırsan otomatik güncelleme kapalı kalır. Depo herkese açık (public) olmalı.
 UPDATE_REPO = "rivendeniz/Riven-Launcher-"
@@ -1433,62 +1449,25 @@ def mc_data_version(mc):
 
 
 def build_riven_pack(theme, mc):
-    """Seçilen tema + sürüm için pack zip'ini bellekte üretir. Sürüm uygunsa (zip baytları, pack_format)."""
+    """Seçilen tema + sürüm için pack zip'ini riven_ui motoruyla üretir.
+    Tüm dokular (logo, butonlar, HUD vb.) seçilen vurgu rengine göre
+    anında üretilir; sadece panorama PNG'leri riven_pack/{day,night} dizininden okunur.
+    Dönen: (zip baytları, pack_format)."""
+    if not RIVEN_UI_OK:
+        raise RuntimeError("riven_ui engine yüklenemedi")
+    pf = mc_pack_format(mc)
     src = RIVEN_PACK_DIR / theme
     if not (src / "panorama_0.png").is_file():
         raise RuntimeError(f"Tema dosyaları bulunamadı: {src}")
-    pf = mc_pack_format(mc)
-    title = "§aRiven Launcher §7• " + ("Gündüz" if theme == "day" else "Gece") + " Teması"
-    meta = {"pack": {"pack_format": pf, "description": title}}
-    tex = "assets/minecraft/textures/gui/"
-    files = {"pack.mcmeta": json.dumps(meta, ensure_ascii=False).encode("utf-8")}
-
-    def put(arc, path):
-        files[arc] = (src / path).read_bytes()
-
-    for i in range(6):
-        put(f"{tex}title/background/panorama_{i}.png", f"panorama_{i}.png")
-    put(f"{tex}title/background/panorama_overlay.png", "panorama_overlay.png")
-    put(f"{tex}title/minecraft.png", "logo_legacy.png" if pf <= LEGACY_LOGO_MAX_FORMAT else "logo_modern.png")
-    put(f"{tex}title/edition.png", "edition.png")
-    put("assets/minecraft/texts/splashes.txt", "splashes.txt")
-    if (src / "pack.png").is_file():
-        put("pack.png", "pack.png")
-    # menü arkaplanı (1.14-1.20.1'de oyun bunu %25 karartarak çizer -> o sürümler için daha parlak dosya)
-    legacy_bg = (src / "options_background_legacy.png").is_file() and pf < SPRITE_BUTTON_MIN_FORMAT
-    if (src / "options_background.png").is_file():
-        put(f"{tex}options_background.png", "options_background_legacy.png" if legacy_bg else "options_background.png")
-    if pf >= SPRITE_BUTTON_MIN_FORMAT:
-        def nine_slice(w, h):
-            return json.dumps({"gui": {"scaling": {"type": "nine_slice", "width": w, "height": h, "border": 3}}}).encode()
-        wide = nine_slice(200, 20)
-        for name in ("button", "button_highlighted", "button_disabled", "text_field", "text_field_highlighted",
-                     "slider", "slider_highlighted"):
-            if (src / f"{name}.png").is_file():
-                put(f"{tex}sprites/widget/{name}.png", f"{name}.png")
-                files[f"{tex}sprites/widget/{name}.png.mcmeta"] = wide
-        for name in ("slider_handle", "slider_handle_highlighted"):
-            if (src / f"{name}.png").is_file():
-                put(f"{tex}sprites/widget/{name}.png", f"{name}.png")
-                files[f"{tex}sprites/widget/{name}.png.mcmeta"] = nine_slice(8, 20)
-        # 1.20.2+ menü zemini / listeler / ayırıcı çizgiler (bilinmeyen dosyalar eski sürümlerde yok sayılır)
-        if (src / "options_background.png").is_file():
-            for arc in ("menu_background", "menu_list_background"):
-                put(f"{tex}{arc}.png", "options_background.png")
-            for arc in ("inworld_menu_background", "inworld_menu_list_background"):
-                put(f"{tex}{arc}.png", "inworld_background.png")
-        if (src / "separator.png").is_file():
-            for arc in ("header_separator", "footer_separator", "inworld_header_separator", "inworld_footer_separator"):
-                put(f"{tex}{arc}.png", "separator.png")
-    import io
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:      # PNG'ler zaten sıkışık; hızlı yazılsın
-        for arc, data in files.items():
-            if arc.endswith((".mcmeta", ".txt")):
-                zf.writestr(zipfile.ZipInfo(arc, (2020, 1, 1, 0, 0, 0)), data, zipfile.ZIP_DEFLATED)
-            else:
-                zf.writestr(zipfile.ZipInfo(arc, (2020, 1, 1, 0, 0, 0)), data)
-    return buf.getvalue(), pf
+    data, _ = riven_build_pack(
+        mode=theme,
+        accent=CFG.get("ui_accent", RIVEN_DEFAULT_ACCENT),
+        glass=int(CFG.get("ui_glass", 62)),
+        hud=bool(CFG.get("ui_hud", True)),
+        pack_format=pf,
+        panorama_dir=RIVEN_PACK_DIR,
+    )
+    return data, pf
 
 
 def _options_set_packs(opt_path, mc, add=None, remove=None):
@@ -1526,7 +1505,9 @@ def _options_set_packs(opt_path, mc, add=None, remove=None):
 
 
 def install_riven_theme(inst, game_dir):
-    """Oyun başlamadan önce: saate uygun Riven temasını resourcepacks'e yazar ve ilk seferde açar."""
+    """Oyun başlamadan önce: saate uygun Riven temasını resourcepacks'e yazar ve her başlatışta açar.
+    Tema kapalıysa pack'i kaldırır. Açık olduğunda her seferinde resourcePacks listesinin sonuna
+    (en yüksek öncelik) konur ve tekrarlayan/girersiz girişler temizlenir."""
     mc = inst["mc_version"]
     if _ver_tuple(mc) < RIVEN_THEME_MIN_MC:
         return
@@ -1546,17 +1527,32 @@ def install_riven_theme(inst, game_dir):
                 pass
         _options_set_packs(opt, mc, remove=RIVEN_PACK_ENTRY)
         state.pop("seeded", None)
+        state.pop("sig", None)
         write_json(state_f, state)
         return
     data, pf = build_riven_pack(theme, mc)
-    if not dest.exists() or dest.stat().st_size != len(data) or hashlib.sha1(dest.read_bytes()).digest() != hashlib.sha1(data).digest():
+    sig = riven_pack_signature(theme, CFG.get("ui_accent", RIVEN_DEFAULT_ACCENT),
+                                int(CFG.get("ui_glass", 62)), bool(CFG.get("ui_hud", True)))
+    # Pack dosyasını her seferinde güncelle (renk ayarı değişmişse yeniden üretilir)
+    write_needed = True
+    if dest.exists():
+        try:
+            write_needed = (dest.stat().st_size != len(data)
+                            or hashlib.sha1(dest.read_bytes()).digest() != hashlib.sha1(data).digest())
+        except OSError:
+            write_needed = True
+    if write_needed:
         tmp = dest.with_name(dest.name + ".part")
         tmp.write_bytes(data)
         os.replace(tmp, dest)
-    if not state.get("seeded"):              # yalnızca ilk kurulumda otomatik aç; sonradan elle kapatırsan saygı duyarız
-        _options_set_packs(opt, mc, add=RIVEN_PACK_ENTRY)
-        state["seeded"] = True
-        write_json(state_f, state)
+    # Force-enable: önce eski girişleri kaldır, sonra listenin sonuna ekle (en yüksek öncelik).
+    _options_set_packs(opt, mc, remove=RIVEN_PACK_ENTRY)
+    _options_set_packs(opt, mc, add=RIVEN_PACK_ENTRY)
+    state["seeded"] = True
+    state["sig"] = sig
+    state["theme"] = theme
+    state["pf"] = pf
+    write_json(state_f, state)
     add_log(f"Riven teması hazır: {'gündüz' if theme == 'day' else 'gece'} (pack_format {pf}) - {inst['name']}")
 
 
@@ -2064,6 +2060,10 @@ def r_state(m, q, b):
         "theme": CFG.get("theme", "green"), "accent": CFG.get("accent", ""),
         "lang": CFG.get("lang", "tr"),
         "game_theme": CFG.get("riven_theme", "auto"),
+        "ui_accent": CFG.get("ui_accent", RIVEN_DEFAULT_ACCENT),
+        "ui_glass": CFG.get("ui_glass", 62),
+        "ui_hud": CFG.get("ui_hud", True),
+        "ui_presets": [list(p) for p in RIVEN_PRESETS],
         "update": dict(UPDATE), "app_version": APP_VERSION,
     }
 
@@ -2692,6 +2692,42 @@ def r_gametheme(m, q, b):
     CFG["riven_theme"] = mode
     save_cfg()
     return {"mode": mode, "now": riven_theme_for_now()}
+
+
+@route("POST", "/gameui")
+def r_gameui(m, q, b):
+    """Oyun arayüzü ayarları: vurgu rengi, cam saydamlığı, HUD tema aç/kapa."""
+    accent = b.get("accent")
+    if accent is not None:
+        accent = str(accent).strip()
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
+            raise ApiError("Geçersiz vurgu rengi.")
+        CFG["ui_accent"] = accent.lower()
+    glass = b.get("glass")
+    if glass is not None:
+        try:
+            CFG["ui_glass"] = max(0, min(100, int(glass)))
+        except (TypeError, ValueError):
+            raise ApiError("Geçersiz cam değeri.")
+    hud = b.get("hud")
+    if hud is not None:
+        CFG["ui_hud"] = bool(hud)
+    save_cfg()
+    _mode = CFG.get("riven_theme", "auto")
+    if _mode not in ("day", "night"):
+        _mode = "day" if 6 <= datetime.now().hour < 18 else "night"
+    return {"ui_accent": CFG.get("ui_accent"), "ui_glass": CFG.get("ui_glass"),
+            "ui_hud": CFG.get("ui_hud"),
+            "sig": riven_pack_signature(_mode, CFG.get("ui_accent", RIVEN_DEFAULT_ACCENT),
+                                        int(CFG.get("ui_glass", 62)), bool(CFG.get("ui_hud", True)))}
+
+
+PREVIEW_NAMES = {"button", "button_highlighted", "button_disabled", "text_field", "text_field_highlighted",
+                 "slider", "slider_highlighted", "slider_handle", "slider_handle_highlighted",
+                 "checkbox", "checkbox_selected", "tab", "tab_selected", "popup", "tooltip",
+                 "scroller", "separator", "hotbar", "hotbar_selection", "experience_bar",
+                 "experience_bar_progress", "crosshair", "logo", "logo_legacy", "edition",
+                 "icon", "overlay", "slot"}
 
 
 @route("POST", "/lang")
@@ -4743,6 +4779,9 @@ def main():
     if not (WEB_DIR / "index.html").exists():
         sys.exit("web/ klasörü bulunamadı. riven.py ile aynı klasörde olmalı.")
     CFG.update(read_json(CONFIG_FILE, {}))
+    CFG.setdefault("ui_accent", RIVEN_DEFAULT_ACCENT)
+    CFG.setdefault("ui_glass", 62)
+    CFG.setdefault("ui_hud", True)
     migrate_old_config()
     migrate_skins()
     save_cfg()

@@ -1550,13 +1550,14 @@ async function pageAccount() {
 
   const skins = await skinSection(a);
   const themes = themePanel();
+  const gameUi = gameUiPanel();
   const connections = await connectionsCard();
   const hud = await hudCard();
   const discord = await discordCard();
   const friends = await friendsCard();
-  return [h('header', { class: 'page-head' }, h('div', {}, h('h1', {}, 'Hesap ve Discord'),
-    h('p', { class: 'sub' }, 'Token\'lar ve API anahtarları düz dosyaya yazılmaz, sistem kimlik deposunda tutulur.'))),
-  h('div', { style: 'display:flex;flex-direction:column;gap:18px' }, skins, themes,
+  return [h('header', { class: 'page-head' }, h('div', {}, h('h1', {}, 'Riven Launcher'),
+    h('p', { class: 'sub' }, 'Hesap ve Discord • Token\'lar ve API anahtarları düz dosyaya yazılmaz, sistem kimlik deposunda tutulur.'))),
+  h('div', { style: 'display:flex;flex-direction:column;gap:18px' }, skins, themes, gameUi,
     h('div', { class: 'acc-cols' }, offline, ms), hud, connections, friends, discord)];
 }
 

@@ -69,8 +69,118 @@ function themePanel() {
     h('div', { class: 'lang-row' }, h('div', {}, h('div', { class: 'row-title' }, 'Oyun ana ekranı teması'),
       h('div', { class: 'row-sub' }, 'Minecraft açılış ekranı (1.14+): sabah/öğlen güneşli, akşam/gece karanlık')), gtSeg),
     h('p', { class: 'muted', style: 'margin:0;line-height:1.5' },
-      'Arayüz her zaman koyu kalır. Hazır bir renk seç ya da sağdaki kutudan istediğin rengi bul; arka plan o renge göre ayarlanır.'),
+      'Launcher rengi: yalnızca bu uygulamanın arayüzünü boyar (oyun arayüzünün rengi aşağıdaki "Oyun Arayüzü Teması" bölümünden ayrı seçilir). Hazır bir renk seç ya da sağdaki kutudan istediğin rengi bul.'),
     h('div', { class: 'themes' }, dots, wrap));
+}
+
+
+/* ------------------------------------------------------------ oyun arayüzü teması (V50) */
+function gameUiPanel() {
+  let state = { ui_accent: '#22c55e', ui_glass: 62, ui_hud: true, ui_presets: [] };
+  let busy = false, glassValEl = null;
+
+  const container = h('div', { class: 'panel form' },
+    h('h3', { class: 'section-title' }, 'Oyun Arayüzü Teması'));
+
+  // Etiketsiz renk noktası (adı yalnızca ipucu/erişilebilirlik olarak kalır)
+  function presetEl(p) {
+    const [, label, color] = p;
+    const sel = state.ui_accent.toLowerCase() === color.toLowerCase();
+    return h('button', {
+      type: 'button', class: 'gui-dot' + (sel ? ' sel' : ''), title: label, 'aria-label': label,
+      style: `background:${color};color:${color}`,
+      onclick: () => apply('accent', color)
+    });
+  }
+
+  async function apply(field, value) {
+    if (busy) return false;
+    busy = true;
+    const prev = { accent: state.ui_accent, glass: state.ui_glass, hud: state.ui_hud };
+    try {
+      const body = {};
+      if (field === 'accent') { state.ui_accent = value; body.accent = value; }
+      else if (field === 'glass') { state.ui_glass = value; body.glass = value; }
+      else if (field === 'hud') { state.ui_hud = value; body.hud = value; }
+      await api('/gameui', { method: 'POST', body });
+      // Oyun arayüzü rengi yalnızca resource pack'i boyar; launcher rengi "Görünüm ve dil" bölümünden seçilir.
+      if (field === 'accent') render();
+      toast('Arayüz teması güncellendi');
+      return true;
+    } catch (e) {
+      state.ui_accent = prev.accent; state.ui_glass = prev.glass; state.ui_hud = prev.hud;
+      toast(e.message, 'error');
+      return false;
+    } finally { busy = false; }
+  }
+
+  function render() {
+    const curPreset = (state.ui_presets || []).some((p) => p[2].toLowerCase() === state.ui_accent.toLowerCase());
+    const wrap = h('div', { class: 'custom-wrap' + (curPreset ? '' : ' sel') },
+      h('input', { type: 'color', class: 'color-input', value: state.ui_accent, title: 'Özel renk seç',
+        onchange: (e) => apply('accent', e.target.value.toLowerCase()) }),
+      h('input', { class: 'input hex-input', value: state.ui_accent, maxlength: 7, spellcheck: 'false',
+        title: 'Hex renk kodu',
+        oninput: (e) => {
+          const v = e.target.value.startsWith('#') ? e.target.value : '#' + e.target.value;
+          if (/^#[0-9a-f]{6}$/i.test(v)) apply('accent', v.toLowerCase());
+        } }));
+    const dots = (state.ui_presets || []).map(presetEl);
+
+    const glassWrap = h('div', { class: 'row' },
+      h('div', {}, h('div', { class: 'row-title' }, 'Cam saydamlığı'),
+        h('div', { class: 'row-sub' }, 'Panellerin şeffaf katmanı (0 = katı, 100 = çok saydam)')),
+      h('div', { style: 'display:flex;align-items:center;gap:10px;flex:1' },
+        h('input', { type: 'range', min: 0, max: 100, value: state.ui_glass, class: 'range',
+          oninput: (e) => { glassValEl.textContent = e.target.value + '%'; },
+          onchange: (e) => { state.ui_glass = +e.target.value; apply('glass', state.ui_glass); } }),
+        h('span', { class: 'muted', style: 'min-width:36px' }, (glassValEl = h('span', {}, state.ui_glass + '%')))));
+
+    // HUD anahtarı: tek bir düğme; durum yazısı anahtarın hemen altında
+    const hudState = h('span', { class: 'switch-state' }, state.ui_hud ? 'Açık' : 'Kapalı');
+    const hudSwitch = h('button', {
+      type: 'button', class: 'hud-switch' + (state.ui_hud ? ' on' : ''),
+      role: 'switch', 'aria-checked': String(!!state.ui_hud), 'aria-label': 'HUD teması',
+      onclick: async () => {
+        if (busy) return;
+        const next = !state.ui_hud;
+        hudSwitch.classList.toggle('on', next);
+        hudSwitch.setAttribute('aria-checked', String(next));
+        hudState.textContent = next ? 'Açık' : 'Kapalı';
+        const ok = await apply('hud', next);
+        if (!ok) {   // başarısızsa eski görünüme dön
+          hudSwitch.classList.toggle('on', state.ui_hud);
+          hudSwitch.setAttribute('aria-checked', String(!!state.ui_hud));
+          hudState.textContent = state.ui_hud ? 'Açık' : 'Kapalı';
+        }
+      }
+    });
+    const hudWrap = h('div', { class: 'row' },
+      h('div', {}, h('div', { class: 'row-title' }, 'HUD teması'),
+        h('div', { class: 'row-sub' }, 'Can, yeşil, experience bar ve hotbar (yalnızca 1.20.2+)')),
+      h('div', { class: 'switch-col' }, hudSwitch, hudState));
+
+    container.replaceChildren(
+      h('h3', { class: 'section-title' }, 'Oyun Arayüzü Teması'),
+      h('p', { class: 'muted', style: 'margin:0 0 14px' },
+        'Minecraft menü, buton, kaydırıcı ve HUD dokularını seçilen vurgu rengine göre boyar. Her sürüm (1.14+) için otomatik yüklenir.'),
+      h('div', { class: 'lang-row' },
+        h('div', {}, h('div', { class: 'row-title' }, 'Vurgu rengi'),
+          h('div', { class: 'row-sub' }, 'Yalnızca Minecraft içindeki dokuların rengi (launcher rengini değiştirmez)')),
+        h('div', { class: 'gui-accent-wrap' }, h('div', { class: 'gui-presets' }, ...dots), wrap)),
+      h('div', { class: 'lang-row' }, glassWrap),
+      h('div', { class: 'lang-row' }, hudWrap));
+  }
+  render();
+
+  async function load() {
+    try { state = Object.assign(state, await api('/state')); } catch (e) { /* varsayılanla devam */ }
+    render();
+  }
+  // extras.js app.js'den önce yüklenir; api() henüz tanımlı olmayabilir, bu yüzden yüklemeyi ertele
+  setTimeout(load, 0);
+
+  return container;
 }
 
 /* ------------------------------------------------------------ hareketli blok manzarası (V36) */

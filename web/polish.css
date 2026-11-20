@@ -136,3 +136,59 @@ h2::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg
   border-left: 2px solid rgba(var(--glow2), .55) !important; }
 .stat-l { color: rgba(255,255,255,.62); }
 .stat-v { text-shadow: 0 2px 14px rgba(0,0,0,.45); }
+
+/* ================= V49: Oyun arayüzü teması paneli ================= */
+.gui-accent-wrap { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex: 1; flex-wrap: wrap; }
+.gui-presets { display: flex; flex-wrap: nowrap; gap: 10px; }
+.gui-dot { width: 34px; height: 34px; border-radius: 50%; border: 2px solid transparent; padding: 0;
+  cursor: pointer; transition: transform .2s, box-shadow .2s, border-color .2s; }
+.gui-dot:hover { transform: scale(1.12); border-color: rgba(255,255,255,.35); }
+.gui-dot.sel { border-color: #fff; box-shadow: 0 0 0 4px rgba(255,255,255,.2), 0 0 14px currentColor; }
+
+/* cam saydamlığı kaydırıcısı */
+input.range { width: 100%; height: 6px; border-radius: 3px; background: rgba(255,255,255,.08);
+  border: 0; outline: none; -webkit-appearance: none; accent-color: var(--g); }
+input.range::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--g); cursor: pointer; box-shadow: 0 0 10px rgba(var(--glow),.5); }
+input.range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--g);
+  cursor: pointer; border: 0; box-shadow: 0 0 10px rgba(var(--glow),.5); }
+
+/* HUD anahtarı: tek düğme, durum yazısı altında */
+.switch-col { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: none; }
+.hud-switch { width: 50px; height: 28px; border-radius: 999px; border: 1px solid var(--line); padding: 0;
+  background: rgba(255,255,255,.12); position: relative; cursor: pointer; flex: none;
+  transition: background .25s var(--ease), border-color .25s var(--ease), box-shadow .25s var(--ease); }
+.hud-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.3); transition: transform .25s var(--ease); }
+.hud-switch.on { background: linear-gradient(135deg, var(--g2), var(--g3)); border-color: transparent;
+  box-shadow: 0 0 14px rgba(var(--glow), .45); }
+.hud-switch.on::after { transform: translateX(22px); }
+.hud-switch:focus-visible { outline: 2px solid var(--g2); outline-offset: 3px; }
+.switch-state { font-size: 12px; font-weight: 600; color: var(--muted); line-height: 1; }
+
+/* ===== V51: daha zengin launcher arka planı (statik katmanlar; GPU'yu yormaz) ===== */
+.bg {
+  background:
+    radial-gradient(75% 42% at 50% 112%, rgba(var(--glow), .34), transparent 72%),          /* ufuk ışıması */
+    radial-gradient(1100px 700px at 6% -10%, rgba(var(--glow), .28), transparent 62%),
+    radial-gradient(900px 620px at 102% 2%, rgba(var(--glow2), .14), transparent 60%),
+    radial-gradient(700px 520px at 92% 96%, rgba(var(--glow2), .18), transparent 62%),
+    radial-gradient(520px 380px at 48% 40%, rgba(var(--glow), .07), transparent 70%),        /* orta yumuşak ışık */
+    linear-gradient(185deg, var(--bg1) 0%, #04060b 52%, var(--bg2) 100%) !important;
+}
+/* cam gibi çapraz ışık süzülmesi + derin vinyet */
+.bg::after {
+  opacity: 1 !important;
+  background:
+    linear-gradient(115deg, transparent 18%, rgba(255,255,255,.035) 30%, transparent 42%),
+    linear-gradient(115deg, transparent 52%, rgba(var(--glow2), .05) 62%, transparent 72%),
+    radial-gradient(125% 100% at 50% 32%, transparent 42%, rgba(0,0,0,.66)) !important;
+}
+/* iki büyük ışık küresi yavaşça süzülür (yalnızca transform: ucuz) */
+.bg .b1 { animation: bgDriftA 42s ease-in-out infinite alternate !important; will-change: transform; }
+.bg .b2 { animation: bgDriftB 55s ease-in-out infinite alternate !important; will-change: transform; }
+@keyframes bgDriftA { to { transform: translate(90px, 60px) scale(1.12); } }
+@keyframes bgDriftB { to { transform: translate(-80px, -50px) scale(1.15); } }
+/* ufka yakın ince renkli çizgi: manzara ile arayüz arasında ayrım verir */
+.bg .grid-floor { opacity: .38; }
+@media (prefers-reduced-motion: reduce) { .bg .b1, .bg .b2 { animation: none !important; } }

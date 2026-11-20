@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('web', 'web'), ('mods', 'mods'), ('riven_pack', 'riven_pack'), ('riven.ico', '.')]
 binaries = []
-hiddenimports = ['keyring.backends.Windows']
+hiddenimports = ['keyring.backends.Windows', 'riven_ui']
 hiddenimports += collect_submodules('keyring')
 tmp_ret = collect_all('minecraft_launcher_lib')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]

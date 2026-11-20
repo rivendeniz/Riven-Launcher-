@@ -7,7 +7,7 @@ const EN = {
   'Otomatik': 'Automatic', 'Gündüz': 'Day', 'Gece': 'Night', 'Kapalı': 'Off',
   'Oyun teması bir sonraki başlatmada uygulanır': 'The game theme applies on the next launch',
   // gezinme
-  'Keşfet (Modrinth / CurseForge)': 'Discover (Modrinth / CurseForge)', 'Konsol': 'Console', 'AFK Bölgesi': 'AFK Zone',
+  'Keşfet (Modrinth / CurseForge)': 'Discover (Modrinth / CurseForge)', 'Konsol': 'Console', 'AFK Bölgesi': 'AFK Parkour',
   'Hesap ve Discord': 'Account & Discord', 'Hesap ayarları': 'Account settings', 'Ana sayfa': 'Home',
   'Yeni instance oluştur': 'Create new instance', 'Küçült': 'Collapse', "Tüm instance'ları göster": 'Show all instances',
   '1.21.11 için en iyi FPS modlarını otomatik kur': 'Auto-install the best FPS mods for 1.21.11',
@@ -51,7 +51,8 @@ const EN = {
   "Bu launcher'a yerleşik bir CurseForge anahtarı tanımlı; ek bir şey yapman gerekmiyor.": 'This launcher has a built-in CurseForge key; nothing else to do.',
   // hesap / görünüm
   'Görünüm ve dil': 'Appearance & language', 'Dil': 'Language', 'Arayüz dilini seç': 'Choose the interface language',
-  'Arayüz her zaman koyu kalır. Hazır bir renk seç ya da sağdaki kutudan istediğin rengi bul; arka plan o renge göre ayarlanır.': 'The interface always stays dark. Pick a preset color or choose any color on the right; the background adapts to it.',
+  'Launcher rengi: yalnızca bu uygulamanın arayüzünü boyar (oyun arayüzünün rengi aşağıdaki "Oyun Arayüzü Teması" bölümünden ayrı seçilir). Hazır bir renk seç ya da sağdaki kutudan istediğin rengi bul.': 'Launcher color: tints only this app\'s interface (the in-game UI color is chosen separately in "Game UI Theme" below). Pick a preset or choose any color on the right.',
+  'Yalnızca Minecraft içindeki dokuların rengi (launcher rengini değiştirmez)': 'Color of the in-game textures only (does not change the launcher color)',
   "İstediğin rengi seç": 'Pick any color', 'Yeşil': 'Green', 'Mavi': 'Blue', 'Mor': 'Purple', 'Pembe': 'Pink', 'Turuncu': 'Orange',
   'Çevrimdışı oyuncu': 'Offline player', 'Tek kişilik dünyalar ve çevrimdışı sunucular için. Hesap gerekmez.': 'For singleplayer worlds and offline servers. No account needed.',
   'Oyuncu adı': 'Player name', 'Microsoft hesabı': 'Microsoft account', 'Bağlı': 'Connected',

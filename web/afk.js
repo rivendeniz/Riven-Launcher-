@@ -127,7 +127,7 @@ const AFKGame = (() => {
       sf: 1, sfT: 1, kl: false, kr: false, fast: false, fastKey: false, dust: 0,
       score: 0, coins: 0, gaps: 0, near: 0, combo: 0, comboT: 0, bi: 0, bannerT: 3, banner: BIOMES[0].name,
       plats: [], coinList: [], parts: [], pops: [], lastPlat: null,
-      squash: 0, run: 0, shake: 0, hidden: false, deadT: 0, reason: '', newBest: false, freeze: 0,
+      squash: 0, spinT: 9, run: 0, shake: 0, hidden: false, deadT: 0, reason: '', newBest: false, freeze: 0,
     };
     gen = { x: -320, h: 4, n: 0, mk: 0, bk: 0 };
     addPlat('col', 18, 4);
@@ -284,7 +284,7 @@ const AFKGame = (() => {
       R.squash = -0.45; audio.jump();
       burst(R.px + PW / 2, R.py, 6, ['#ffffff', '#d8d8d8'], 90, 40);
     } else if (!R.airUsed) {
-      R.vy = -VJ2; R.airUsed = true; R.squash = -0.35; audio.jump2();
+      R.vy = -VJ2; R.airUsed = true; R.squash = -0.35; R.spinT = 0; audio.jump2();
       burst(R.px + PW / 2, R.py - 4, 10, ['#9be7ff', '#ffffff'], 140, 20);
     } else return false;
     R.buffer = 0;
@@ -353,7 +353,7 @@ const AFKGame = (() => {
         if (R.air) { R.air = false; R.airUsed = false; onLand(p, impact); }
         break;
       }
-      if (R.py > p.top + 12 && R.px + PW > pl + 2 && R.px + PW / 2 < pl + 4) { die(T_('Duvara çarptın'), false); return; }
+      if (R.py > p.top + 12 && R.px + PW > pl + 2 && R.px + PW / 2 < pl + 4) { die('Duvara çarptın', false); return; }
     }
     if (!R.onGround) R.air = true;
     else { R.dust -= dt; if (R.dust <= 0) { R.dust = 0.07; R.parts.push({ x: R.px + 6, y: R.py - 3, vx: -70 - rnd() * 40, vy: -20 - rnd() * 30, life: 0.35, max: 0.35, size: 2 + rnd() * 2, col: 'rgba(255,255,255,.75)', g: 120 }); } }
@@ -364,7 +364,7 @@ const AFKGame = (() => {
         if (!p.spikes.length || R.px + PW < p.x || R.px > p.x + p.w * T) continue;
         for (const i of p.spikes) {
           const sx = p.x + i * T + 9, sw = T - 18, sy = p.top - 22;
-          if (R.px + PW - 5 > sx && R.px + 5 < sx + sw && R.py - 2 > sy && R.py - PH + 8 < p.top) { die(T_('Dikene çarptın'), false); return; }
+          if (R.px + PW - 5 > sx && R.px + 5 < sx + sw && R.py - 2 > sy && R.py - PH + 8 < p.top) { die('Dikene çarptın', false); return; }
         }
       }
     }
@@ -381,7 +381,7 @@ const AFKGame = (() => {
     }
 
     // sıvıya düşme
-    if (R.py > LIQ_Y + 6) { die(T_(BIOMES[biomeAt(R.px / T)].dead), true); return; }
+    if (R.py > LIQ_Y + 6) { die(BIOMES[biomeAt(R.px / T)].dead, true); return; }
 
     // biyom değişimi
     const bi = (Math.max(0, R.px / T) / BIOME_LEN) | 0;
@@ -401,6 +401,7 @@ const AFKGame = (() => {
     for (const p of R.pops) { p.y -= 42 * dt; p.life -= dt; }
     R.pops = R.pops.filter((p) => p.life > 0);
     R.squash += (0 - R.squash) * Math.min(1, dt * 12);
+    R.spinT = (R.spinT === undefined ? 9 : R.spinT) + dt;
     R.shake = Math.max(0, R.shake - dt);
     if (R.bannerT > 0) R.bannerT -= dt;
     if (mode === 'dead') R.deadT += dt;
@@ -737,33 +738,80 @@ const AFKGame = (() => {
     for (const i of p.spikes) drawSpike(b.spike, sx + i * T, p.top);
   }
 
+  /* Karakter: eklemli (iskelet) animasyon. Koşuda bacak/kol sallanır, gövde sekip öne eğilir; havada yükselirken
+     kollar yukarı, düşerken yana açılır; çift zıplamada ileri takla atar; eşarp rüzgârla dalgalanır, göz kırpar. */
+  function limb(px, py, w, len, ang, col, tipCol, tipH) {
+    ctx.save(); ctx.translate(px, py); ctx.rotate(ang);
+    ctx.fillStyle = col; ctx.fillRect(-w / 2, 0, w, len);
+    ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fillRect(-w / 2, 0, 2, len);          // ışık tarafı
+    ctx.fillStyle = 'rgba(0,0,0,.16)'; ctx.fillRect(w / 2 - 2, 0, 2, len);              // gölge tarafı
+    if (tipCol) { ctx.fillStyle = tipCol; ctx.fillRect(-w / 2, len - tipH, w, tipH); }
+    ctx.restore();
+  }
+
+  function drawScarf(air, a, lean) {
+    const n = 7, spd = clamp(R.sf || 1, 0.7, 1.5);
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const f = i / n;
+      pts.push([-2 - i * (5.2 + spd * 1.6), -30 + Math.sin(time * 11 - i * 0.9) * (1.2 + i * 0.75)
+        + (air ? -a * f * 10 : f * 3) - lean * f * 8]);
+    }
+    for (const [wd, col] of [[6, '#c93b3b'], [3.4, '#ff6b6b']]) {
+      ctx.strokeStyle = col; ctx.lineWidth = wd; ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+      ctx.beginPath(); pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.stroke();
+    }
+  }
+
   function drawPlayer() {
     if (R.hidden) return;
     const x = R.px - view.cam, y = R.py, air = !R.onGround, ph = R.run;
+    const a = clamp(R.vy / 700, -1, 1), k = (a + 1) / 2;                 // -1 yükseliyor ... +1 düşüyor
+    const sin = Math.sin(ph), cos = Math.cos(ph);
+    const spd = clamp(R.sf || 1, 0.7, 1.5);
+    const lean = air ? clamp(R.vy / 2600, -0.12, 0.2) : 0.1 + (spd - 1) * 0.12;
+    const bob = air ? 0 : -Math.abs(sin) * 2.6;
+    // çift zıplama taklası
+    const spin = air && R.spinT < 0.5 ? smooth(R.spinT / 0.5) * Math.PI * 2 : 0;
+    // yer çekimi gölgesi (zemine yakınken karakterin altında yumuşak elips)
     ctx.save();
     ctx.translate(x + PW / 2, y);
     ctx.scale(1 + R.squash * 0.35, 1 - R.squash * 0.35);
-    ctx.translate(-PW / 2, 0);
-    const sw = air ? 0 : Math.sin(ph) * 8, armA = air ? -5 : -Math.sin(ph) * 7;
-    const legY = air ? 4 : 0;
-    // arka kol ve bacak
-    ctx.fillStyle = '#2f8a8a'; ctx.fillRect(PW / 2 - 3 + armA * 0.6, -31, 7, 14);
-    ctx.fillStyle = '#2f3f86'; ctx.fillRect(PW / 2 - 9 - sw, -14, 9, 14 - legY * 0.5);
-    ctx.fillStyle = '#20284f'; ctx.fillRect(PW / 2 - 9 - sw, -4, 9, 4);
-    // ön bacak
-    ctx.fillStyle = '#3b4fa0'; ctx.fillRect(PW / 2 + (air ? 2 : 0) + sw * 0.9, -14, 9, 14 - legY * 0.5);
-    ctx.fillStyle = '#20284f'; ctx.fillRect(PW / 2 + (air ? 2 : 0) + sw * 0.9, -4, 9, 4);
+    ctx.translate(0, bob);
+    ctx.translate(0, -22); ctx.rotate(lean + spin); ctx.translate(0, 22);
+    const legB = air ? lerp(0.45, 0.32, k) : sin * 0.95;
+    const legF = air ? lerp(-0.95, -0.28, k) : -sin * 0.95;
+    const armF = air ? lerp(-2.6, -1.3, k) + Math.sin(time * 16) * 0.12 * k : sin * 0.9;
+    const armB = air ? lerp(-2.1, 1.4, k) - Math.sin(time * 16) * 0.12 * k : -sin * 0.9;
+    const kneeLift = air ? 0 : Math.max(0, -sin) * 2;
+    drawScarf(air, a, lean);
+    // arka kol ve bacak (koyu tonlar)
+    limb(0, -30, 7, 13, armB, '#238f8f', '#c4936b', 4);
+    limb(-3, -14, 9, 14 - kneeLift, legB, '#2a3a7a', '#1b2248', 4);
     // gövde
-    ctx.fillStyle = '#2bb5b5'; ctx.fillRect(2, -31, 20, 17);
-    ctx.fillStyle = '#4fd6d6'; ctx.fillRect(2, -31, 20, 4);
+    ctx.fillStyle = '#2bb5b5'; ctx.fillRect(-10, -31, 20, 17);
+    ctx.fillStyle = '#4fd6d6'; ctx.fillRect(-10, -31, 20, 4);
+    ctx.fillStyle = 'rgba(255,255,255,.15)'; ctx.fillRect(-10, -27, 3, 11);
+    ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(7, -27, 3, 11);
+    ctx.fillStyle = '#1f6f6f'; ctx.fillRect(-10, -17, 20, 3);                // kemer
+    ctx.fillStyle = '#ffd24a'; ctx.fillRect(-2, -17, 4, 3);                  // toka
+    // ön bacak
+    limb(3, -14, 9, 14 + (air ? 0 : kneeLift * 0), legF, '#3b4fa0', '#20284f', 4);
+    // kafa (hafif sekme ve gövde eğimine ters dönüş)
+    ctx.save(); ctx.translate(0, -31); ctx.rotate(-lean * 0.6 + (air ? -a * 0.08 : sin * 0.03)); ctx.translate(0, 31);
+    ctx.fillStyle = '#e0ac82'; ctx.fillRect(-9, -PH, 18, 14);
+    ctx.fillStyle = '#6b4423'; ctx.fillRect(-9, -PH, 18, 5); ctx.fillRect(-9, -PH + 5, 4, 4); ctx.fillRect(-9, -PH + 9, 2, 2);
+    ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fillRect(-9, -PH, 18, 1);
+    const blink = (time % 3.4) < 0.11;
+    if (blink) { ctx.fillStyle = '#3a2a2a'; ctx.fillRect(2, -PH + 8, 6, 1.5); }
+    else {
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(2, -PH + 6, 6, 4);
+      ctx.fillStyle = '#2a2a55'; ctx.fillRect(air && a < 0 ? 5 : 5, -PH + 6 + (air && a > 0.3 ? 1 : 0), 3, 4);
+    }
+    ctx.fillStyle = '#c9855f'; ctx.fillRect(-1, -PH + 11, 5, 1.5);           // ağız
+    ctx.restore();
     // ön kol
-    ctx.fillStyle = '#2bb5b5'; ctx.fillRect(PW / 2 - 3 - armA, -30, 7, 13);
-    ctx.fillStyle = '#e0ac82'; ctx.fillRect(PW / 2 - 3 - armA, -19, 7, 4);
-    // kafa
-    ctx.fillStyle = '#e0ac82'; ctx.fillRect(3, -PH, 18, 14);
-    ctx.fillStyle = '#6b4423'; ctx.fillRect(3, -PH, 18, 5); ctx.fillRect(3, -PH + 5, 4, 3);
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(14, -PH + 6, 5, 4);
-    ctx.fillStyle = '#2a2a55'; ctx.fillRect(17, -PH + 6, 3, 4);
+    limb(0, -30, 7, 13, armF, '#2bb5b5', '#e0ac82', 4);
     ctx.restore();
   }
 
@@ -822,7 +870,7 @@ const AFKGame = (() => {
       ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, W, H);
       const y = panel(440, 270);
       txt(T_('Oyun bitti'), W / 2, y + 56, 36, '#ff8a7a', 'center');
-      txt(R.reason, W / 2, y + 84, 16, '#b9d3c4', 'center', 600);
+      txt(T_(R.reason), W / 2, y + 84, 16, '#b9d3c4', 'center', 600);
       txt(String(Math.floor(R.score)), W / 2, y + 140, 52, '#ffffff', 'center');
       txt(R.newBest ? T_('Yeni rekor!') : T_('REKOR') + ' ' + best, W / 2, y + 168, 18, '#ffe066', 'center');
       txt(`${Math.floor(R.px / T)} m  •  ● ${R.coins}  •  ${R.gaps} ${T_('boşluk')}  •  ${R.near} ${T_('yakın')}`, W / 2, y + 196, 14, '#b9d3c4', 'center', 600);
