@@ -54,9 +54,20 @@ function themePanel() {
   hex.addEventListener('input', () => setCustom(hex.value.startsWith('#') ? hex.value : '#' + hex.value));
   const langSeg = h('div', { class: 'seg lang-seg' }, [['tr', 'Türkçe'], ['en', 'English']].map(([code, label]) =>
     h('button', { class: code === LANG ? 'sel' : '', onclick: () => setLang(code, true) }, label)));
+  const gtModes = [['auto', 'Otomatik'], ['day', 'Gündüz'], ['night', 'Gece'], ['off', 'Kapalı']];
+  const gtNow = (typeof S !== 'undefined' && S && S.game_theme) || 'auto';
+  const gtBtns = gtModes.map(([key, label]) => h('button', { class: key === gtNow ? 'sel' : '', 'data-k': key,
+    onclick: async () => {
+      gtBtns.forEach((b) => b.classList.toggle('sel', b.dataset.k === key));
+      try { await api('/gametheme', { method: 'POST', body: { mode: key } }); toast('Oyun teması bir sonraki başlatmada uygulanır'); }
+      catch (e) { toast(e.message, 'error'); }
+    } }, label));
+  const gtSeg = h('div', { class: 'seg lang-seg' }, gtBtns);
   return h('div', { class: 'panel form' }, h('h3', { class: 'section-title' }, 'Görünüm ve dil'),
     h('div', { class: 'lang-row' }, h('div', {}, h('div', { class: 'row-title' }, 'Dil'),
       h('div', { class: 'row-sub' }, 'Arayüz dilini seç')), langSeg),
+    h('div', { class: 'lang-row' }, h('div', {}, h('div', { class: 'row-title' }, 'Oyun ana ekranı teması'),
+      h('div', { class: 'row-sub' }, 'Minecraft açılış ekranı (1.14+): sabah/öğlen güneşli, akşam/gece karanlık')), gtSeg),
     h('p', { class: 'muted', style: 'margin:0;line-height:1.5' },
       'Arayüz her zaman koyu kalır. Hazır bir renk seç ya da sağdaki kutudan istediğin rengi bul; arka plan o renge göre ayarlanır.'),
     h('div', { class: 'themes' }, dots, wrap));

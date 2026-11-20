@@ -39,6 +39,7 @@ import webbrowser
 import zipfile
 import zlib
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -69,6 +70,8 @@ BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 WEB_DIR = BASE_DIR / "web"
 SHARED_DIR = str(mll.utils.get_minecraft_directory())  # kütüphaneler/asset'ler ortak
 RIVEN_MODS_DIR = BASE_DIR / "mods"  # launcher ile gelen gömülü modlar (örn. riventag)
+RIVEN_PACK_DIR = BASE_DIR / "riven_pack"  # gömülü oyun teması (ana ekran resource pack'i)
+RIVEN_PACK_FILE = "RivenUI.zip"
 RIVEN_MOD_PREFIX = "riventag-"  # bu önekle başlayan dosyalar kullanıcı mod listesinde gösterilmez
 ICON_KEYS = ("diamond", "star", "heart", "sword", "shield", "skull", "potion",
              "chest", "bolt", "compass", "pickaxe", "anvil")
@@ -1363,6 +1366,200 @@ def inject_riven_tag(inst, game_dir, auth):
         add_log(f"Riven Tag eklenemedi (oyun yine de başlıyor): {exc}")
 
 
+
+# ---------------------------------------------------------------- Riven oyun teması (resource pack)
+# Minecraft ana ekranını (panorama + logo + butonlar + splash yazıları) Riven temasıyla değiştirir.
+# Gerçek saate göre gündüz (06:00-17:59) güneşli, akşam/gece (18:00-05:59) karanlık tema seçilir.
+# Pack, oyun her başlatıldığında instance'ın resourcepacks klasörüne yazılır ve options.txt'te açılır.
+RIVEN_THEME_MIN_MC = (1, 14)
+RIVEN_PACK_ENTRY = "file/" + RIVEN_PACK_FILE
+RIVEN_PACK_STATE = ".riven_theme.json"
+# (ilk sürüm, pack_format); en yakın alt sınır kullanılır
+PACK_FORMATS = [((1, 14), 4), ((1, 15), 5), ((1, 16, 2), 6), ((1, 17), 7), ((1, 18), 8), ((1, 19), 9),
+                ((1, 19, 3), 12), ((1, 19, 4), 13), ((1, 20), 15), ((1, 20, 2), 18), ((1, 20, 3), 22),
+                ((1, 20, 5), 32), ((1, 21), 34), ((1, 21, 2), 42), ((1, 21, 4), 46), ((1, 21, 5), 55),
+                ((1, 21, 6), 63), ((1, 21, 7), 64), ((1, 21, 9), 69), ((1, 21, 11), 75)]
+LEGACY_LOGO_MAX_FORMAT = 9    # 1.19.2 ve öncesi logo dokusu iki parçalıdır (256x256), 1.19.3+ tek parça (256x64)
+SPRITE_BUTTON_MIN_FORMAT = 18  # 1.20.2+ butonlar gui/sprites altında ayrı dosyalardır
+
+
+def riven_theme_for_now():
+    """Ayara göre 'day' / 'night' / None (kapalı). 'auto' = bilgisayarın yerel saati."""
+    mode = CFG.get("riven_theme", "auto")
+    if mode == "off":
+        return None
+    if mode in ("day", "night"):
+        return mode
+    return "day" if 6 <= datetime.now().hour < 18 else "night"
+
+
+def _client_jar(mc):
+    return Path(SHARED_DIR) / "versions" / mc / f"{mc}.jar"
+
+
+def _read_jar_json(mc, name):
+    try:
+        with zipfile.ZipFile(_client_jar(mc)) as zf:
+            return json.loads(zf.read(name).decode("utf-8-sig"))
+    except Exception:
+        return None
+
+
+def mc_pack_format(mc):
+    """Sürümün resource pack formatı: önce oyunun kendi jar'ından, olmazsa tablodan."""
+    vj = _read_jar_json(mc, "version.json") or {}
+    pv = vj.get("pack_version")
+    if isinstance(pv, dict):
+        for key in ("resource_major", "resource"):
+            if isinstance(pv.get(key), int):
+                return pv[key]
+    elif isinstance(pv, int):
+        return pv
+    mj = _read_jar_json(mc, "pack.mcmeta") or {}
+    pf = (mj.get("pack") or {}).get("pack_format")
+    if isinstance(pf, int):
+        return pf
+    ver, fmt = _ver_tuple(mc), PACK_FORMATS[0][1]
+    for start, f in PACK_FORMATS:
+        if ver >= start:
+            fmt = f
+    return fmt
+
+
+def mc_data_version(mc):
+    vj = _read_jar_json(mc, "version.json") or {}
+    dv = vj.get("world_version")
+    return dv if isinstance(dv, int) else None
+
+
+def build_riven_pack(theme, mc):
+    """Seçilen tema + sürüm için pack zip'ini bellekte üretir. Sürüm uygunsa (zip baytları, pack_format)."""
+    src = RIVEN_PACK_DIR / theme
+    if not (src / "panorama_0.png").is_file():
+        raise RuntimeError(f"Tema dosyaları bulunamadı: {src}")
+    pf = mc_pack_format(mc)
+    title = "§aRiven Launcher §7• " + ("Gündüz" if theme == "day" else "Gece") + " Teması"
+    meta = {"pack": {"pack_format": pf, "description": title}}
+    tex = "assets/minecraft/textures/gui/"
+    files = {"pack.mcmeta": json.dumps(meta, ensure_ascii=False).encode("utf-8")}
+
+    def put(arc, path):
+        files[arc] = (src / path).read_bytes()
+
+    for i in range(6):
+        put(f"{tex}title/background/panorama_{i}.png", f"panorama_{i}.png")
+    put(f"{tex}title/background/panorama_overlay.png", "panorama_overlay.png")
+    put(f"{tex}title/minecraft.png", "logo_legacy.png" if pf <= LEGACY_LOGO_MAX_FORMAT else "logo_modern.png")
+    put(f"{tex}title/edition.png", "edition.png")
+    put("assets/minecraft/texts/splashes.txt", "splashes.txt")
+    if (src / "pack.png").is_file():
+        put("pack.png", "pack.png")
+    # menü arkaplanı (1.14-1.20.1'de oyun bunu %25 karartarak çizer -> o sürümler için daha parlak dosya)
+    legacy_bg = (src / "options_background_legacy.png").is_file() and pf < SPRITE_BUTTON_MIN_FORMAT
+    if (src / "options_background.png").is_file():
+        put(f"{tex}options_background.png", "options_background_legacy.png" if legacy_bg else "options_background.png")
+    if pf >= SPRITE_BUTTON_MIN_FORMAT:
+        def nine_slice(w, h):
+            return json.dumps({"gui": {"scaling": {"type": "nine_slice", "width": w, "height": h, "border": 3}}}).encode()
+        wide = nine_slice(200, 20)
+        for name in ("button", "button_highlighted", "button_disabled", "text_field", "text_field_highlighted",
+                     "slider", "slider_highlighted"):
+            if (src / f"{name}.png").is_file():
+                put(f"{tex}sprites/widget/{name}.png", f"{name}.png")
+                files[f"{tex}sprites/widget/{name}.png.mcmeta"] = wide
+        for name in ("slider_handle", "slider_handle_highlighted"):
+            if (src / f"{name}.png").is_file():
+                put(f"{tex}sprites/widget/{name}.png", f"{name}.png")
+                files[f"{tex}sprites/widget/{name}.png.mcmeta"] = nine_slice(8, 20)
+        # 1.20.2+ menü zemini / listeler / ayırıcı çizgiler (bilinmeyen dosyalar eski sürümlerde yok sayılır)
+        if (src / "options_background.png").is_file():
+            for arc in ("menu_background", "menu_list_background"):
+                put(f"{tex}{arc}.png", "options_background.png")
+            for arc in ("inworld_menu_background", "inworld_menu_list_background"):
+                put(f"{tex}{arc}.png", "inworld_background.png")
+        if (src / "separator.png").is_file():
+            for arc in ("header_separator", "footer_separator", "inworld_header_separator", "inworld_footer_separator"):
+                put(f"{tex}{arc}.png", "separator.png")
+    import io
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:      # PNG'ler zaten sıkışık; hızlı yazılsın
+        for arc, data in files.items():
+            if arc.endswith((".mcmeta", ".txt")):
+                zf.writestr(zipfile.ZipInfo(arc, (2020, 1, 1, 0, 0, 0)), data, zipfile.ZIP_DEFLATED)
+            else:
+                zf.writestr(zipfile.ZipInfo(arc, (2020, 1, 1, 0, 0, 0)), data)
+    return buf.getvalue(), pf
+
+
+def _options_set_packs(opt_path, mc, add=None, remove=None):
+    """options.txt içindeki resourcePacks listesine giriş ekler/çıkarır (diğer satırlara dokunmaz)."""
+    lines, found = [], False
+    if opt_path.is_file():
+        lines = opt_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("resourcePacks:"):
+            found = True
+            try:
+                arr = json.loads(line.split(":", 1)[1])
+                if not isinstance(arr, list):
+                    arr = ["vanilla"]
+            except ValueError:
+                arr = ["vanilla"]
+            if add and add not in arr:
+                arr.append(add)              # listenin sonu = en yüksek öncelik
+            if remove and remove in arr:
+                arr.remove(remove)
+            lines[i] = "resourcePacks:" + json.dumps(arr, ensure_ascii=False, separators=(",", ":"))
+    if not found:
+        if not add:
+            return
+        if not opt_path.is_file():
+            dv = mc_data_version(mc)
+            if dv:
+                lines.append(f"version:{dv}")   # veri sürümü yoksa oyun eski ayar düzeltmelerini uygular
+            else:
+                return   # sürüm bilinmiyorsa sıfırdan options.txt yazmayız (oyun kendi oluşturur)
+        lines.append('resourcePacks:["vanilla","' + add + '"]')
+    tmp = opt_path.with_name(opt_path.name + ".riven")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp, opt_path)
+
+
+def install_riven_theme(inst, game_dir):
+    """Oyun başlamadan önce: saate uygun Riven temasını resourcepacks'e yazar ve ilk seferde açar."""
+    mc = inst["mc_version"]
+    if _ver_tuple(mc) < RIVEN_THEME_MIN_MC:
+        return
+    packs = game_dir / "resourcepacks"
+    packs.mkdir(parents=True, exist_ok=True)
+    dest, opt, state_f = packs / RIVEN_PACK_FILE, game_dir / "options.txt", game_dir / RIVEN_PACK_STATE
+    try:
+        state = json.loads(state_f.read_text(encoding="utf-8")) if state_f.is_file() else {}
+    except (OSError, ValueError):
+        state = {}
+    theme = riven_theme_for_now()
+    if theme is None:                        # tema kapalı: pack'i kaldır
+        if dest.exists():
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+        _options_set_packs(opt, mc, remove=RIVEN_PACK_ENTRY)
+        state.pop("seeded", None)
+        write_json(state_f, state)
+        return
+    data, pf = build_riven_pack(theme, mc)
+    if not dest.exists() or dest.stat().st_size != len(data) or hashlib.sha1(dest.read_bytes()).digest() != hashlib.sha1(data).digest():
+        tmp = dest.with_name(dest.name + ".part")
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+    if not state.get("seeded"):              # yalnızca ilk kurulumda otomatik aç; sonradan elle kapatırsan saygı duyarız
+        _options_set_packs(opt, mc, add=RIVEN_PACK_ENTRY)
+        state["seeded"] = True
+        write_json(state_f, state)
+    add_log(f"Riven teması hazır: {'gündüz' if theme == 'day' else 'gece'} (pack_format {pf}) - {inst['name']}")
+
+
 # ---------------------------------------------------------------- otomatik güncelleme
 UPDATE = {"state": "idle", "version": "", "progress": 0.0, "message": ""}
 UPDATE_LOCK = threading.Lock()
@@ -1604,6 +1801,10 @@ def launch_worker(inst, repair):
             (game_dir / sub).mkdir(parents=True, exist_ok=True)
         if use_fabric:
             inject_riven_tag(inst, game_dir, auth)
+        try:
+            install_riven_theme(inst, game_dir)
+        except Exception as exc:
+            add_log(f"Riven teması kurulamadı (oyun yine de başlıyor): {exc}")
 
         options = {
             "username": auth["username"], "uuid": auth["uuid"], "token": auth["token"],
@@ -1862,6 +2063,7 @@ def r_state(m, q, b):
         "account": account_info(), "logs": logs, "log_idx": idx,
         "theme": CFG.get("theme", "green"), "accent": CFG.get("accent", ""),
         "lang": CFG.get("lang", "tr"),
+        "game_theme": CFG.get("riven_theme", "auto"),
         "update": dict(UPDATE), "app_version": APP_VERSION,
     }
 
@@ -2480,6 +2682,16 @@ def r_theme(m, q, b):
     CFG["theme"] = theme
     save_cfg()
     return {"theme": theme, "accent": CFG.get("accent", "")}
+
+
+@route("POST", "/gametheme")
+def r_gametheme(m, q, b):
+    mode = b.get("mode")
+    if mode not in ("auto", "day", "night", "off"):
+        raise ApiError("Geçersiz tema modu.")
+    CFG["riven_theme"] = mode
+    save_cfg()
+    return {"mode": mode, "now": riven_theme_for_now()}
 
 
 @route("POST", "/lang")

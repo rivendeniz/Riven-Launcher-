@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('web', 'web'), ('mods', 'mods'), ('riven.ico', '.')]
+datas = [('web', 'web'), ('mods', 'mods'), ('riven_pack', 'riven_pack'), ('riven.ico', '.')]
 binaries = []
 hiddenimports = ['keyring.backends.Windows']
 hiddenimports += collect_submodules('keyring')

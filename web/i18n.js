@@ -2,6 +2,10 @@
 /* Dil katmanı: kaynak metinler Türkçe; İngilizce karşılıkları burada. Varsayılan dil Türkçe. */
 let LANG = 'tr';
 const EN = {
+  'Oyun ana ekranı teması': 'In-game main menu theme',
+  'Minecraft açılış ekranı (1.14+): sabah/öğlen güneşli, akşam/gece karanlık': 'Minecraft title screen (1.14+): sunny in the morning/noon, dark in the evening/night',
+  'Otomatik': 'Automatic', 'Gündüz': 'Day', 'Gece': 'Night', 'Kapalı': 'Off',
+  'Oyun teması bir sonraki başlatmada uygulanır': 'The game theme applies on the next launch',
   // gezinme
   'Keşfet (Modrinth / CurseForge)': 'Discover (Modrinth / CurseForge)', 'Konsol': 'Console', 'AFK Bölgesi': 'AFK Zone',
   'Hesap ve Discord': 'Account & Discord', 'Hesap ayarları': 'Account settings', 'Ana sayfa': 'Home',
