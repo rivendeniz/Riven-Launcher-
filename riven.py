@@ -4420,7 +4420,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "GET" and path == "/":
             html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-            return self._send(200, html.replace("__RIVEN_TOKEN__", SERVER["token"]).encode(),
+            html = html.replace("__RIVEN_TOKEN__", SERVER["token"])
+            if MOBILE:   # telefonda arayüz biraz küçülsün (0.75 = %25 küçük; değiştirmek için bu sayıyı oynat)
+                html = html.replace("width=device-width, initial-scale=1", "width=device-width, initial-scale=0.75")
+            return self._send(200, html.encode(),
                               "text/html; charset=utf-8")
         if method == "GET" and path in STATIC:
             fname, ctype = STATIC[path]
