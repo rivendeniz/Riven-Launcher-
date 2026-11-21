@@ -10,8 +10,8 @@ android {
         applicationId 'com.riven.launcher'
         minSdk 24
         targetSdk 34
-        versionCode (project.findProperty('verCode') ?: '1').toInteger()
-        versionName (project.findProperty('verName') ?: '1.8.5')
+        versionCode = (project.findProperty('verCode') ?: '1').toString().toInteger()
+        versionName = (project.findProperty('verName') ?: '1.8.5').toString()
         ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64' }
     }
     signingConfigs {
