@@ -4,7 +4,9 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.res.AssetManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -12,6 +14,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.core.content.FileProvider;
 
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
@@ -26,14 +31,16 @@ import java.net.URL;
 public class MainActivity extends Activity {
     private static final String URL_HOME = "http://127.0.0.1:8780/";
     private static final int PICK = 77;
+    static MainActivity instance;
     private WebView web;
     private ValueCallback<Uri[]> chooser;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        instance = this;
         web = new WebView(this);
-        web.setBackgroundColor(0xFF0B0B12);
+        web.setBackgroundColor(0xFF04100A);   // giris ekraniyla ayni koyu ton: acilista beyaz/gri parlama olmaz
         setContentView(web);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -72,16 +79,16 @@ public class MainActivity extends Activity {
             File marker = new File(getFilesDir(), "riven_base.stamp");
             if (!base.isDirectory() || !marker.isFile() || !String.valueOf(stamp).equals(readText(marker))) {
                 deleteTree(base);
-                for (String name : new String[]{"web", "mods", "riven_pack", "riven.ico"}) {
+                for (String name : new String[]{"web", "mods", "riven.ico"}) {   // riven_pack (16 MB) yok: telefonda oyun başlatılmıyor
                     copyAsset(getAssets(), name, new File(base, name));
                 }
                 writeText(marker, String.valueOf(stamp));
             }
             if (!Python.isStarted()) Python.start(new AndroidPlatform(this));
             Python.getInstance().getModule("android_main").callAttr("start", base.getAbsolutePath());
-            for (int i = 0; i < 120; i++) {   // sunucu hazir olana kadar bekle (en fazla ~60 sn)
+            for (int i = 0; i < 600; i++) {   // sunucu hazir olana kadar bekle (en fazla ~60 sn); sik yokla ki acilis gecikmesin
                 if (serverUp()) break;
-                Thread.sleep(500);
+                Thread.sleep(100);
             }
             runOnUiThread(() -> web.loadUrl(URL_HOME));
         } catch (Throwable t) {
@@ -148,6 +155,35 @@ public class MainActivity extends Activity {
             chooser = null;
         }
         super.onActivityResult(req, res, data);
+    }
+
+    /** Python'dan çağrılır (otomatik güncelleme): indirilen APK'nın sistem kurulum ekranını açar. */
+    public static void installApk(final String path) {
+        final MainActivity a = instance;
+        if (a == null) return;
+        a.runOnUiThread(() -> {
+            try {
+                if (Build.VERSION.SDK_INT >= 26 && !a.getPackageManager().canRequestPackageInstalls()) {
+                    a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + a.getPackageName())));
+                    Toast.makeText(a, "Riven icin 'bu kaynaktan kurulum' iznini ac, sonra tekrar Kur'a bas.", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Uri uri = FileProvider.getUriForFile(a, a.getPackageName() + ".fileprovider", new File(path));
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(uri, "application/vnd.android.package-archive");
+                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                a.startActivity(i);
+            } catch (Exception e) {
+                Toast.makeText(a, "Kurulum acilamadi: " + e, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (instance == this) instance = null;
+        super.onDestroy();
     }
 
     @Override

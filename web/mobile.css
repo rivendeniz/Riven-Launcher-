@@ -28,3 +28,28 @@ input, select, textarea { font-size: 16px; }   /* otomatik yakınlaştırmayı �
   .statusbar { padding: 0 14px; font-size: 11.5px; }
   .page-head h1 { font-size: 22px; }
 }
+
+/* Güncelleme çubuğu alt menünün üstünde kalsın */
+@media (max-width: 760px) { .update-bar { bottom: 112px; } }
+
+/* Alçak ekran (yatay telefon) giriş ekranı: renk çubuğu üstte ortada, kart sıkılaşır, hiçbir şey kapanmaz */
+@media (max-height: 560px) {
+  #login-root { padding-top: 54px; box-sizing: border-box; overflow-y: auto; place-items: safe center; }
+  .lgx-dock { top: 8px; right: 50%; translate: 50% 0; padding: 6px 14px; gap: 10px; max-width: 96vw; }
+  .lgx-lbl { display: none; }
+  .lgx-hue { width: 80px; }
+  .lg { gap: 28px; }
+  .lg-stage { min-height: 0; }
+  .lg-plate { margin-bottom: 14px; }
+  .lg-cap { display: none; }
+  .lg-card { padding: 18px 24px 16px; }
+  .lg-brand { margin-bottom: 10px; }
+  .lg-brand img { width: 40px; height: 40px; }
+  .lg-word b { font-size: 24px; }
+  .lg-card h1 { font-size: 24px; margin-bottom: 4px; }
+  .lg-sub { display: none; }
+  .lg-field { margin: 12px 0 10px; }
+  .lg-input { padding: 20px 14px 6px 50px; font-size: 16px; }
+  .lg-go, .lg-ms { padding: 11px 16px; }
+  .lg-skin { margin-top: 10px; }
+}

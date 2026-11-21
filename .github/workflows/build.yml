@@ -96,7 +96,7 @@ jobs:
           sed -i "s/^APP_VERSION = \"[0-9.]*\"/APP_VERSION = \"${{ needs.build.outputs.version }}\"/" riven.py
           python tools/paketle.py apk
       - name: APK derle
-        run: gradle -p android assembleDebug --no-daemon
+        run: gradle -p android assembleDebug --no-daemon -PverCode=${{ github.run_number }} -PverName=${{ needs.build.outputs.version }}
       - name: APK adini duzenle
         run: cp android/app/build/outputs/apk/debug/app-debug.apk RivenLauncher-Mobil.apk
       - uses: softprops/action-gh-release@v2

@@ -205,3 +205,14 @@ input.range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; b
   -webkit-mask-image: radial-gradient(ellipse at 50% 35%, #000 20%, transparent 78%); mask-image: radial-gradient(ellipse at 50% 35%, #000 20%, transparent 78%); }
 .bg::after { background: radial-gradient(1200px 700px at 50% -10%, rgba(255,255,255,.07), transparent 60%),
     radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.5) 100%); opacity: .8; }
+
+
+/* ===== MOBİL (body.mob: yalnızca APK/Termux; sunucu bu sınıfı ekler, masaüstü etkilenmez) ===== */
+body.mob .lgx-dock { display: none !important; }              /* giriş ekranındaki renk çubuğu */
+body.mob #login-root { padding-top: 0 !important; }           /* çubuk için ayrılan üst boşluk da kalktı */
+body.mob .lg-video-off { display: none; }
+body.mob .bg .aurora, body.mob .bg .grid-floor, body.mob .bg .b3 { display: none; }   /* ağır arka plan katmanları */
+/* video yok: giriş ekranı arka planı vurgu rengini izleyen sabit, hafif bir gradyan olur */
+body.mob #login-root { background:
+  radial-gradient(ellipse 70% 60% at 25% 45%, rgba(var(--glow), .22), transparent 70%),
+  radial-gradient(ellipse 60% 50% at 80% 80%, rgba(var(--glow2), .14), transparent 70%), #020705 !important; }

@@ -161,18 +161,25 @@ function appendConsole(text) {
 /* Otomatik güncelleme çubuğu */
 function renderUpdateBar(u) {
   let bar = document.getElementById('update-bar');
-  const active = u && ['downloading', 'waiting', 'installing', 'available', 'error'].includes(u.state);
+  const active = u && ['downloading', 'waiting', 'installing', 'available', 'error', 'ready'].includes(u.state);
   if (!active) { if (bar) bar.remove(); return; }
   if (!bar) { bar = h('div', { id: 'update-bar', class: 'update-bar' }); document.body.append(bar); }
   const pct = Math.round((u.progress || 0) * 100);
   const en = LANG === 'en';
   const text = u.state === 'downloading' ? (en ? `Downloading new version ${u.version}... ${pct}%` : `Yeni sürüm ${u.version} indiriliyor... %${pct}`)
     : u.state === 'installing' ? (en ? `Installing version ${u.version}, the launcher will reopen...` : `Sürüm ${u.version} kuruluyor, launcher yeniden açılacak...`)
+    : u.state === 'ready' ? (en ? `Version ${u.version} downloaded. Tap Install.` : `Sürüm ${u.version} indirildi. Kurmak için Kur'a bas.`)
     : u.state === 'waiting' ? (en ? `Version ${u.version} is ready, it will update when the game closes.` : `Sürüm ${u.version} hazır, oyun kapanınca güncellenecek.`)
     : u.state === 'error' ? (en ? `Auto-update failed: ${u.message || 'unknown error'} (will retry in 5 min)` : `Otomatik güncelleme başarısız: ${u.message || 'bilinmeyen hata'} (5 dk sonra tekrar denenecek)`)
     : (en ? `A new version ${u.version} is available.` : (u.message || `Yeni sürüm ${u.version} mevcut.`));
+  const key = [u.state, pct, u.version, u.message, LANG].join('|');
+  if (bar.dataset.k === key) return;   // gereksiz yeniden çizme: düğmeye basış kaybolmasın
+  bar.dataset.k = key;
   bar.textContent = '';
   bar.append(h('span', {}, text));
+  if (u.state === 'ready') bar.append(h('button', { class: 'btn small', style: 'margin-left:12px', onclick: async () => {
+    try { await api('/update/install', { method: 'POST' }); } catch (e) { toast(e.message, 'error'); }
+  } }, en ? 'Install' : 'Kur'));
   if (u.state === 'downloading') bar.append(h('i', { style: `width:${pct}%` }));
 }
 

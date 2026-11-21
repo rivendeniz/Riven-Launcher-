@@ -13,6 +13,7 @@ def start(base_dir):
         return
     _started = True
     os.environ["RIVEN_MOBIL"] = "1"
+    os.environ["RIVEN_ANDROID"] = "1"   # otomatik güncelleme: APK indir, kullanıcı onayıyla kur
     os.environ["RIVEN_BASE"] = base_dir
     sys.argv = ["riven.py", "--mobil"]
     import riven

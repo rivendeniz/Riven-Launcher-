@@ -10,14 +10,30 @@ android {
         applicationId 'com.riven.launcher'
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName '1.8.5'
+        versionCode (project.findProperty('verCode') ?: '1').toInteger()
+        versionName (project.findProperty('verName') ?: '1.8.5')
         ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64' }
+    }
+    signingConfigs {
+        riven {   // sabit anahtar: her derleme aynı imzayla çıkar, böylece yeni APK eskisinin üstüne kurulabilir
+            storeFile file('../riven.keystore')
+            storePassword 'riven123'
+            keyAlias 'riven'
+            keyPassword 'riven123'
+            storeType 'pkcs12'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.riven }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.12.0'
 }
 
 chaquopy {

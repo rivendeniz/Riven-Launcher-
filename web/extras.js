@@ -304,7 +304,9 @@ function startScene() {
     if (document.hidden || !document.hasFocus() || now - last < 33) return;   // odakta değilken çizme
     last = now; draw();
   };
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) draw(); else requestAnimationFrame(loop);
+  /* Mobil (body.mob): sürekli çizim pili ve işlemciyi yer; tek kare çiz, boyut değişince yenile */
+  if (document.body.classList.contains('mob')) { draw(); addEventListener('resize', draw); }
+  else if (matchMedia('(prefers-reduced-motion: reduce)').matches) draw(); else requestAnimationFrame(loop);
 }
 
 /* ------------------------------------------------------------ 3B Minecraft karakteri (CSS 3D) */
@@ -541,12 +543,16 @@ function showLogin() {
     h('span', {}, h('i', { class: 'dot on' }), 'Riven Tag aktif'), h('span', {}, 'Minecraft 1.21.11'), h('span', {}, 'Fabric'));
 
   /* arka plan videosu (web/intro.mp4 — istersen kendi videonla değiştir) */
+  /* Mobilde (body.mob) video hiç yüklenmez: ~1 MB indirme + çözme + renk filtresi açılışı yavaşlatıyordu */
+  const MOB = document.body.classList.contains('mob');
   const srcMp4 = h('source', { src: '/intro.mp4', type: 'video/mp4' });
   const srcWebm = h('source', { src: '/intro.webm', type: 'video/webm' });
-  const vid = h('video', { class: 'lg-video', preload: 'auto' }, srcMp4, srcWebm);
-  vid.muted = true; vid.loop = true; vid.autoplay = true; vid.playsInline = true; vid.disablePictureInPicture = true;
-  srcWebm.addEventListener('error', () => vid.remove());  // iki biçim de açılmazsa eski arka plan kalır
-  vid.addEventListener('playing', () => vid.classList.add('on'));
+  const vid = MOB ? h('div', { class: 'lg-video-off' }) : h('video', { class: 'lg-video', preload: 'auto' }, srcMp4, srcWebm);
+  if (!MOB) {
+    vid.muted = true; vid.loop = true; vid.autoplay = true; vid.playsInline = true; vid.disablePictureInPicture = true;
+    srcWebm.addEventListener('error', () => vid.remove());  // iki biçim de açılmazsa eski arka plan kalır
+    vid.addEventListener('playing', () => vid.classList.add('on'));
+  }
   try {  // videoyu seçili vurgu rengine boya (video yeşil: ~142°)
     const c = getComputedStyle(document.documentElement).getPropertyValue('--g').trim();
     if (/^#[0-9a-f]{6}$/i.test(c)) {
@@ -556,7 +562,7 @@ function showLogin() {
       vid.style.setProperty('--vh', Math.round(hue - 142) + 'deg');
     }
   } catch (e) { /* varsayılan renk */ }
-  vid.play().catch(() => {});
+  if (!MOB) vid.play().catch(() => {});
 
   /* sinematik açılış: logo + harfler + ilerleme çubuğu, sonra giriş kartı gelir */
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -583,7 +589,7 @@ function showLogin() {
     setTimeout(() => intro.remove(), 900);
     name.focus();
   }
-  if (still || seenRecently) { root.replaceChildren(vid); reveal(); return; }
+  if (still || seenRecently || MOB) { root.replaceChildren(vid); reveal(); return; }   // mobilde sinematik açılış yok: kart hemen gelir
   root.classList.add('intro');
   root.replaceChildren(vid, intro);
   intro.addEventListener('click', reveal);
@@ -613,6 +619,7 @@ function showLogin() {
     const root = document.getElementById('login-root');
     if (!root || root.firstChild) return;
     baseLogin();
+    if (document.body.classList.contains('mob')) return;   // mobil: giriş ekranında renk seçme çubuğu yok (renk Hesap/Ayarlar'dan değişir)
     const vid = root.querySelector('.lg-video');
     if (vid) vid.after(h('div', { class: 'lgx-tint' }), h('div', { class: 'lgx-shade' }));
 

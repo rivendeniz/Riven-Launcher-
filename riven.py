@@ -80,6 +80,11 @@ APP_VERSION = "1.8.5"
 # Boş bırakırsan otomatik güncelleme kapalı kalır. Depo herkese açık (public) olmalı.
 UPDATE_REPO = "rivendeniz/Riven-Launcher-"
 UPDATE_ASSET_SUFFIX = "Setup.exe"
+UPDATE_CHECK_SECONDS = 10 * 60   # GitHub'da yeni sürüm kontrol aralığı (10 dakika)
+# Platforma göre güncelleme dosyası (GitHub Release'teki asset adı) ve uzantısı
+UPDATE_FILES = {"windows": "RivenLauncher-Setup.exe", "android": "RivenLauncher-Mobil.apk",
+                "termux": "RivenLauncher-Mobil.zip", "linux": "RivenLauncher-Linux.tar.gz"}
+UPDATE_EXT = {"windows": ".exe", "android": ".apk", "termux": ".zip", "linux": ".tar.gz"}
 DEFAULT_VERSION = "1.21.11"
 HOME_DIR = Path.home() / ".riven"
 INSTANCES_DIR = HOME_DIR / "instances"
@@ -1563,6 +1568,26 @@ def install_riven_theme(inst, game_dir):
 # ---------------------------------------------------------------- otomatik güncelleme
 UPDATE = {"state": "idle", "version": "", "progress": 0.0, "message": ""}
 UPDATE_LOCK = threading.Lock()
+UPDATE_READY = {"file": None}   # Android: indirilmiş, kullanıcı onayı bekleyen APK
+
+
+def update_kind():
+    """Bu kopya hangi güncelleme türünü kullanır: windows / linux / termux / android / None."""
+    if os.environ.get("RIVEN_ANDROID") == "1":
+        return "android"
+    if MOBILE:
+        return "termux"
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return None
+
+
+def _managed_install():
+    """Linux/Termux: kur.sh ile paketten kurulmuş mu (kaynak/git klasörü değil)?"""
+    root = Path(__file__).resolve().parent
+    return (root / "kur.sh").is_file() or (root / "kur_termux.sh").is_file()
 
 
 def _ver_tuple(v):
@@ -1586,8 +1611,11 @@ def _find_update_fallback():
         raise ApiError("GitHub istek sınırı doldu, daha sonra tekrar denenecek.")
     if not re.search(r"\d", tag) or _ver_tuple(tag) <= _ver_tuple(APP_VERSION):
         return None
+    fname = UPDATE_FILES.get(update_kind())
+    if not fname:
+        return None
     return (tag.lstrip("vV"),
-            f"https://github.com/{UPDATE_REPO}/releases/download/{urllib.parse.quote(tag)}/RivenLauncher-Setup.exe", "")
+            f"https://github.com/{UPDATE_REPO}/releases/download/{urllib.parse.quote(tag)}/{fname}", "")
 
 
 def find_update():
@@ -1608,8 +1636,11 @@ def find_update():
     tag = str(rel.get("tag_name") or "")
     if _ver_tuple(tag) <= _ver_tuple(APP_VERSION):
         return None
+    want = UPDATE_FILES.get(update_kind())
+    if not want:
+        return None
     for a in rel.get("assets") or []:
-        if str(a.get("name", "")).endswith(UPDATE_ASSET_SUFFIX):
+        if str(a.get("name", "")) == want:
             dl = a.get("browser_download_url", "")
             host = urllib.parse.urlparse(dl).hostname or ""
             if urllib.parse.urlparse(dl).scheme != "https" or not (host == "github.com" or host.endswith(".githubusercontent.com")):
@@ -1621,7 +1652,7 @@ def find_update():
 
 
 def download_update(version, dl_url, sha256):
-    dest = _update_dir() / f"RivenLauncher-Setup-{version}.exe"
+    dest = _update_dir() / f"RivenLauncher-update-{version}{UPDATE_EXT.get(update_kind(), '.bin')}"
     tmp = dest.with_suffix(".part")
     h = hashlib.sha256()
     req = urllib.request.Request(dl_url, headers={"User-Agent": UA})
@@ -1682,11 +1713,59 @@ def apply_update(setup):
     os._exit(0)
 
 
+def apply_archive_update(archive, kind):
+    """Linux (tar.gz) / Termux (zip): yeni dosyaları kurulu klasörün üstüne yazar (.venv'e dokunmaz) ve yeniden başlar."""
+    import tarfile
+    root = Path(__file__).resolve().parent
+    req_name = "requirements-linux.txt" if kind == "linux" else "requirements-mobil.txt"
+    req_old = (root / req_name).read_bytes() if (root / req_name).is_file() else b""
+
+    def rel_path(name):   # paket kök klasörünü at, üst dizine kaçmayı ve .venv'i reddet
+        parts = [p for p in name.replace("\\", "/").split("/") if p not in ("", ".")]
+        if len(parts) < 2 or ".." in parts or parts[1] == ".venv":
+            return None
+        return Path(*parts[1:])
+
+    items = []
+    if kind == "linux":
+        with tarfile.open(archive) as tf:
+            for mem in tf.getmembers():
+                rel = rel_path(mem.name) if mem.isfile() else None
+                if rel is not None:
+                    items.append((rel, tf.extractfile(mem).read(), mem.mode & 0o777))
+    else:
+        with zipfile.ZipFile(archive) as zf:
+            for info in zf.infolist():
+                rel = None if info.is_dir() else rel_path(info.filename)
+                if rel is not None:
+                    items.append((rel, zf.read(info), 0o644))
+    if not any(r.name == "riven.py" for r, _, _ in items):
+        raise ApiError("Güncelleme paketi geçersiz (riven.py yok).")
+    for rel, data, mode in items:
+        target = (root / rel).resolve()
+        if root not in target.parents:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".new")
+        tmp.write_bytes(data)
+        os.chmod(tmp, mode or 0o644)
+        os.replace(tmp, target)
+    new_req = (root / req_name).read_bytes() if (root / req_name).is_file() else b""
+    if new_req != req_old:   # bağımlılıklar değiştiyse kur (hata olursa devam et)
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", str(root / req_name)], timeout=900)
+        except Exception as exc:
+            add_log(f"Bağımlılıklar güncellenemedi: {exc}")
+    sys.stdout.flush()
+    os.execv(sys.executable, [sys.executable] + sys.argv)   # aynı komutla yeniden başlat
+
+
 def _cleanup_old_updates(keep=None):
     try:
-        for f in _update_dir().glob("RivenLauncher-Setup-*.*"):
-            if keep is None or f != keep:
-                f.unlink(missing_ok=True)
+        for pattern in ("RivenLauncher-Setup-*.*", "RivenLauncher-update-*"):
+            for f in _update_dir().glob(pattern):
+                if keep is None or f != keep:
+                    f.unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -1695,7 +1774,7 @@ def update_cycle(auto=True):
     if not UPDATE_LOCK.acquire(blocking=False):   # zaten bir kontrol/indirme sürüyor
         return
     try:
-        if UPDATE["state"] in ("downloading", "installing", "waiting"):
+        if UPDATE["state"] in ("downloading", "installing", "waiting", "ready"):
             return
         try:
             UPDATE.update(state="checking", message="", progress=0.0)
@@ -1706,7 +1785,10 @@ def update_cycle(auto=True):
                 return
             version, dl, sha = found
             UPDATE.update(version=version)
-            if not (sys.platform.startswith("win") and getattr(sys, "frozen", False)):
+            kind = update_kind()
+            managed = ((kind == "windows" and getattr(sys, "frozen", False)) or kind == "android"
+                       or (kind in ("linux", "termux") and _managed_install()))
+            if not managed:
                 UPDATE.update(state="available", message="Yeni sürüm var (kaynak koddan çalıştığın için elle güncelle).")
                 return
             if not auto:
@@ -1716,6 +1798,11 @@ def update_cycle(auto=True):
             add_log(f"Yeni launcher sürümü bulundu: {version}, indiriliyor...")
             setup = download_update(version, dl, sha)
             _cleanup_old_updates(keep=setup)
+            if kind == "android":   # Android kurulumu kullanıcı onayı ister: indir, "Kur" düğmesini göster
+                UPDATE_READY["file"] = str(setup)
+                UPDATE.update(state="ready", progress=1.0, message="")
+                add_log(f"Güncelleme indirildi ({version}); arayüzdeki 'Kur' düğmesine bas.")
+                return
             # Oyun açıkken kesme; oyun bitince kur
             while RUNNING or PREPARING["id"]:
                 UPDATE.update(state="waiting", message="Oyun kapanınca güncellenecek.")
@@ -1723,7 +1810,10 @@ def update_cycle(auto=True):
             UPDATE.update(state="installing", message="Güncelleniyor, launcher yeniden açılacak...")
             add_log("Launcher güncelleniyor...")
             time.sleep(1.5)   # arayüz mesajı görsün
-            apply_update(setup)
+            if kind in ("linux", "termux"):
+                apply_archive_update(setup, kind)
+            else:
+                apply_update(setup)
         except Exception as exc:
             msg = exc.msg if isinstance(exc, ApiError) else str(exc)
             UPDATE.update(state="error", message=msg)
@@ -1733,11 +1823,11 @@ def update_cycle(auto=True):
 
 
 def update_worker():
-    time.sleep(3)
+    time.sleep(20 if MOBILE else 3)   # mobilde arayüz açılırken ağ/CPU için yarışma
     while True:
         if UPDATE_REPO:
             update_cycle(auto=True)
-        time.sleep(300 if UPDATE["state"] == "error" else 900)
+        time.sleep(UPDATE_CHECK_SECONDS)   # açıkken 10 dakikada bir GitHub'ı kontrol et (hata olsa da aynı aralık)
 
 
 def launch_worker(inst, repair):
@@ -2091,6 +2181,17 @@ def r_update_check(m, q, b):
     if not UPDATE_REPO:
         raise ApiError("Otomatik güncelleme kapalı (riven.py içinde UPDATE_REPO boş).")
     threading.Thread(target=update_cycle, daemon=True).start()
+    return {"ok": True}
+
+
+@route("POST", "/update/install")
+def r_update_install(m, q, b):
+    """Android: indirilen APK'nın sistem kurulum ekranını aç (kullanıcı onaylar)."""
+    f = UPDATE_READY.get("file")
+    if update_kind() != "android" or UPDATE["state"] != "ready" or not f or not Path(f).is_file():
+        raise ApiError("Kurulacak bir güncelleme hazır değil.")
+    from java import jclass   # Chaquopy
+    jclass("com.riven.launcher.MainActivity").installApk(f)
     return {"ok": True}
 
 
@@ -4423,6 +4524,8 @@ class Handler(BaseHTTPRequestHandler):
             html = html.replace("__RIVEN_TOKEN__", SERVER["token"])
             if MOBILE:   # telefonda arayüz biraz küçülsün (0.75 = %25 küçük; değiştirmek için bu sayıyı oynat)
                 html = html.replace("width=device-width, initial-scale=1", "width=device-width, initial-scale=0.75")
+            if MOBILE:   # arayüz dosyaları (css/js) yalnızca mobilde "mob" sınıfına göre sadeleşir; masaüstü etkilenmez
+                html = html.replace("<body>", '<body class="mob">', 1)
             return self._send(200, html.encode(),
                               "text/html; charset=utf-8")
         if method == "GET" and path in STATIC:
@@ -4812,26 +4915,32 @@ def main():
     SERVER.update(port=httpd.server_address[1], httpd=httpd)
     url = f"http://127.0.0.1:{SERVER['port']}/"
     print(f"{APP} çalışıyor: {url}  (kapatmak için pencereyi kapat veya Ctrl+C)")
-    threading.Thread(target=install_riven_tag_all, daemon=True).start()
-    if sys.platform.startswith("win") and not MOBILE:   # otomatik güncelleme yalnızca Windows Setup.exe içindir
+    if not MOBILE:   # mobilde oyun başlatılmadığı için Riven Tag kurulumu / Fabric yenileme / Discord gereksiz
+        threading.Thread(target=install_riven_tag_all, daemon=True).start()
+    if update_kind():   # Windows: Setup.exe, Linux/Termux: paket üstüne yazma, Android: APK
         threading.Thread(target=update_worker, daemon=True).start()
-    threading.Thread(target=refresh_fabric_loaders, daemon=True).start()
+    if not MOBILE:
+        threading.Thread(target=refresh_fabric_loaders, daemon=True).start()
     # Sürüm listelerini önceden ısıt: "Yeni instance" penceresi ve Keşfet ilk açılışta beklemesin
     def _warm():
+        if MOBILE:
+            time.sleep(6)   # önce arayüz açılsın, listeler sonra
         for fn in (get_versions, lambda: r_forge_supported(None, {}, {})):
             try:
                 fn()
             except Exception:
                 pass
     threading.Thread(target=_warm, daemon=True).start()
-    threading.Thread(target=discord_worker, daemon=True).start()
+    if not MOBILE:
+        threading.Thread(target=discord_worker, daemon=True).start()
     if MOBILE:   # pencere/izleyici yok: sunucu çalışır, arayüz telefonun tarayıcısında açılır
         print(f"Mobil mod: tarayıcında aç -> {url}")
-        opener = shutil.which("termux-open-url")
-        try:
-            subprocess.Popen([opener, url]) if opener else webbrowser.open(url)
-        except Exception:
-            pass
+        if os.environ.get("RIVEN_ANDROID") != "1":   # APK'da arayüz kendi WebView'ında; dışarıda tarayıcı aramaya gerek yok
+            opener = shutil.which("termux-open-url")
+            try:
+                subprocess.Popen([opener, url]) if opener else webbrowser.open(url)
+            except Exception:
+                pass
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

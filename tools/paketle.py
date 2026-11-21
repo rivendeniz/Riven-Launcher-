@@ -11,10 +11,12 @@ KLASOR = ["web", "mods", "riven_pack"]
 ATLA = ("__pycache__", ".pyc")
 
 
-def dosyalar():
+def dosyalar(telefon=False):
     for k in KOD:
         yield ROOT / k
     for d in KLASOR:
+        if telefon and d == "riven_pack":   # telefonda oyun başlatılmaz: 16 MB'lık oyun teması gereksiz
+            continue
         for f in sorted((ROOT / d).rglob("*")):
             if f.is_file() and not any(a in str(f) for a in ATLA):
                 yield f
@@ -36,7 +38,7 @@ def ekler(hedef):
 def uret(hedef):
     OUT.mkdir(exist_ok=True)
     kok = "RivenLauncher-Linux" if hedef == "linux" else "RivenLauncher-Mobil"
-    girdiler = [(f"{kok}/{f.relative_to(ROOT).as_posix()}", f.read_bytes(), 0o644) for f in dosyalar()]
+    girdiler = [(f"{kok}/{f.relative_to(ROOT).as_posix()}", f.read_bytes(), 0o644) for f in dosyalar(telefon=(hedef != "linux"))]
     girdiler += [(f"{kok}/{ad}", metin(p) if p.suffix in (".sh", ".txt") else p.read_bytes(), mod)
                  for ad, p, mod in ekler(hedef)]
     if hedef == "linux":
@@ -66,6 +68,8 @@ def hazirla_apk():
     shutil.rmtree(assets, ignore_errors=True)
     assets.mkdir(parents=True)
     for d in KLASOR:
+        if d == "riven_pack":   # APK'da oyun başlatılmaz; MainActivity de bu klasörü kopyalamaz
+            continue
         shutil.copytree(ROOT / d, assets / d, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(ROOT / "riven.ico", assets / "riven.ico")
     mip = app / "res" / "mipmap-xxxhdpi"
