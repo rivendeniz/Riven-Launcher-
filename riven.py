@@ -71,7 +71,7 @@ except ImportError:  # keyring yoksa Microsoft oturumu hatırlanmaz
     keyring = None
 
 APP = "Riven Launcher"
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.5"
 # Otomatik güncelleme: GitHub "kullanici/depo" adını yaz (ör. "riven/RivenLauncher").
 # Boş bırakırsan otomatik güncelleme kapalı kalır. Depo herkese açık (public) olmalı.
 UPDATE_REPO = "rivendeniz/Riven-Launcher-"
@@ -1572,6 +1572,20 @@ def _update_dir():
     return d
 
 
+def _find_update_fallback():
+    """GitHub API sınırına takılınca: /releases/latest yönlendirmesinden etiketi okur (sınırsız, anahtarsız)."""
+    try:
+        req = urllib.request.Request(f"https://github.com/{UPDATE_REPO}/releases/latest", headers={"User-Agent": UA})
+        with open_url(req, 15) as resp:
+            tag = urllib.parse.unquote(resp.geturl()).rstrip("/").rsplit("/", 1)[-1]
+    except Exception:
+        raise ApiError("GitHub istek sınırı doldu, daha sonra tekrar denenecek.")
+    if not re.search(r"\d", tag) or _ver_tuple(tag) <= _ver_tuple(APP_VERSION):
+        return None
+    return (tag.lstrip("vV"),
+            f"https://github.com/{UPDATE_REPO}/releases/download/{urllib.parse.quote(tag)}/RivenLauncher-Setup.exe", "")
+
+
 def find_update():
     """GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa (sürüm, indirme_adresi, sha256) döner."""
     if not UPDATE_REPO or "/" not in UPDATE_REPO:
@@ -1584,8 +1598,8 @@ def find_update():
     except urllib.error.HTTPError as exc:
         if exc.code == 404:      # depoda henüz yayın (release) yok: hata değil
             return None
-        if exc.code in (403, 429):
-            raise ApiError("GitHub istek sınırı doldu, daha sonra tekrar denenecek.")
+        if exc.code in (403, 429):   # API sınırı: github.com yönlendirmesinden son etiketi öğren
+            return _find_update_fallback()
         raise ApiError(f"Güncelleme sunucusu hata verdi ({exc.code}).")
     tag = str(rel.get("tag_name") or "")
     if _ver_tuple(tag) <= _ver_tuple(APP_VERSION):
@@ -1715,11 +1729,11 @@ def update_cycle(auto=True):
 
 
 def update_worker():
-    time.sleep(4)
+    time.sleep(3)
     while True:
         if UPDATE_REPO:
             update_cycle(auto=True)
-        time.sleep(600 if UPDATE["state"] == "error" else 1800)
+        time.sleep(300 if UPDATE["state"] == "error" else 900)
 
 
 def launch_worker(inst, repair):

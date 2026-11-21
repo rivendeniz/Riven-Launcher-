@@ -66,6 +66,11 @@ function themePanel() {
   return h('div', { class: 'panel form' }, h('h3', { class: 'section-title' }, 'Görünüm ve dil'),
     h('div', { class: 'lang-row' }, h('div', {}, h('div', { class: 'row-title' }, 'Dil'),
       h('div', { class: 'row-sub' }, 'Arayüz dilini seç')), langSeg),
+    h('div', { class: 'lang-row' }, h('div', {}, h('div', { class: 'row-title' }, 'Güncellemeler'),
+      h('div', { class: 'row-sub' }, tr('Sürüm') + ' ' + ((typeof S !== 'undefined' && S && S.app_version) || ''))),
+      h('button', { class: 'btn small', onclick: async () => {
+        try { await api('/update/check', { method: 'POST' }); toast(tr('Güncelleme kontrol ediliyor…')); } catch (e) { toast(e.message, 'error'); }
+      } }, 'Güncellemeleri denetle')),
     h('div', { class: 'lang-row' }, h('div', {}, h('div', { class: 'row-title' }, 'Oyun ana ekranı teması'),
       h('div', { class: 'row-sub' }, 'Minecraft açılış ekranı (1.14+): sabah/öğlen güneşli, akşam/gece karanlık')), gtSeg),
     h('p', { class: 'muted', style: 'margin:0;line-height:1.5' },
@@ -219,6 +224,15 @@ function startScene() {
     }
     ctx.clearRect(0, 0, W, H);
     const u = H / 900, t = tick;
+    // kuzey ışığı şeritleri (V53): üç yumuşak, dalgalanan renk bandı
+    for (let i = 0; i < 3; i++) {
+      const base = H * (.20 + i * .07), amp = 34 * u + i * 8 * u, col = i === 1 ? rgb2 : rgb;
+      const g = ctx.createLinearGradient(0, base - 90 * u, 0, base + 150 * u);
+      g.addColorStop(0, rgba(col, 1, 0)); g.addColorStop(.45, rgba(col, 1, .08 - i * .018)); g.addColorStop(1, rgba(col, 1, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, base + 150 * u);
+      for (let x = 0; x <= W; x += 18) ctx.lineTo(x, base + Math.sin(x * .004 + t * .006 * (1 + i * .4) + i * 2) * amp + Math.sin(x * .011 - t * .004 + i) * amp * .45);
+      ctx.lineTo(W, base + 150 * u); ctx.closePath(); ctx.fill();
+    }
     // yıldızlar
     STARS.forEach((s) => {
       const a = .25 + .55 * (.5 + .5 * Math.sin(t * s.f + s.p));

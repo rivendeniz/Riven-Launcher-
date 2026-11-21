@@ -7,7 +7,7 @@ const EN = {
   'Otomatik': 'Automatic', 'Gündüz': 'Day', 'Gece': 'Night', 'Kapalı': 'Off',
   'Oyun teması bir sonraki başlatmada uygulanır': 'The game theme applies on the next launch',
   // gezinme
-  'Keşfet (Modrinth / CurseForge)': 'Discover (Modrinth / CurseForge)', 'Konsol': 'Console', 'AFK Bölgesi': 'AFK Parkour',
+  'Keşfet (Modrinth / CurseForge)': 'Discover (Modrinth / CurseForge)', 'Konsol': 'Console', 'Parkur': 'Parkour', 'Güncellemeler': 'Updates', 'Güncellemeleri denetle': 'Check for updates', 'Güncelleme kontrol ediliyor…': 'Checking for updates…',
   'Hesap ve Discord': 'Account & Discord', 'Hesap ayarları': 'Account settings', 'Ana sayfa': 'Home',
   'Yeni instance oluştur': 'Create new instance', 'Küçült': 'Collapse', "Tüm instance'ları göster": 'Show all instances',
   '1.21.11 için en iyi FPS modlarını otomatik kur': 'Auto-install the best FPS mods for 1.21.11',
@@ -135,8 +135,10 @@ Object.assign(EN, {
   // genel
   'Bağlanılıyor…': 'Connecting…', 'Bağlan': 'Connect', 'Arkadaş ekle': 'Add a friend', 'Gönder': 'Send',
   // afk bölgesi
-  'Oyun yüklenirken ya da beklerken vakit geçir: sonsuz parkurda en yüksek puanı yap.': 'Kill time while the game loads or while you wait: chase the high score on an endless parkour.',
-  'AFK PARKURU': 'AFK PARKOUR', 'Sonsuz parkur • 4 biyom • kombo puanı': 'Endless parkour • 4 biomes • combo score',
+  'Oyun yüklenirken ya da beklerken vakit geçir: 4 seviyeli parkurda en yüksek puanı yap.': 'Kill time while the game loads or while you wait: chase the high score on a 4-level parkour.',
+  'PARKUR': 'PARKOUR', 'Seviye 1': 'Level 1', 'Seviye 2': 'Level 2', 'Seviye 3': 'Level 3', 'Seviye 4': 'Level 4', 'Kristale çarptın': 'You hit a crystal',
+  'Çok kolay': 'Very easy', 'Kolay': 'Easy', 'Zor': 'Hard', 'İmkansız': 'Impossible', 'Seviye seç': 'Pick level',
+  '4 seviyeli parkurda en yüksek puanı yap.': 'chase the high score on a 4-level parkour.',
   'Boşluk / ↑ : zıpla (havada bir kez daha)': 'Space / ↑ : jump (once more in the air)',
   '← →  yavaşla / hızlan     ↓  hızlı düş': '← →  slow down / speed up     ↓  fast fall',
   'Başlamak için Boşluk ya da tıkla': 'Press Space or click to start', 'Devam etmek için Boşluk ya da tıkla': 'Press Space or click to resume',

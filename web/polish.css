@@ -192,3 +192,16 @@ input.range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; b
 /* ufka yakın ince renkli çizgi: manzara ile arayüz arasında ayrım verir */
 .bg .grid-floor { opacity: .38; }
 @media (prefers-reduced-motion: reduce) { .bg .b1, .bg .b2 { animation: none !important; } }
+
+/* V52: daha zengin arka plan: renkli ışık ağı, ince blok ızgarası, vinyet */
+.bg { background:
+    radial-gradient(900px 600px at 12% 8%, rgba(var(--glow), .20), transparent 62%),
+    radial-gradient(800px 560px at 92% 18%, rgba(var(--glow2), .12), transparent 60%),
+    radial-gradient(1000px 700px at 60% 112%, rgba(var(--glow), .16), transparent 62%),
+    linear-gradient(165deg, var(--bg1), var(--bg2)); }
+.bg::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .55;
+  background-image: linear-gradient(rgba(255,255,255,.028) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.028) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 35%, #000 20%, transparent 78%); mask-image: radial-gradient(ellipse at 50% 35%, #000 20%, transparent 78%); }
+.bg::after { background: radial-gradient(1200px 700px at 50% -10%, rgba(255,255,255,.07), transparent 60%),
+    radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.5) 100%); opacity: .8; }

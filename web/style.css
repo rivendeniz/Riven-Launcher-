@@ -1014,3 +1014,8 @@ h2::after { background: linear-gradient(90deg, rgba(var(--glow), .5), transparen
 .statusbar .fill { animation: none !important; }
 /* Pencere odakta değilken hiçbir animasyon çalışmasın */
 .idle *, .idle *::before, .idle *::after { animation-play-state: paused !important; }
+
+.afk-levels { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.afk-lv { display: inline-flex; align-items: center; gap: 8px; border-color: color-mix(in srgb, var(--lv) 45%, var(--line)); }
+.afk-lv b { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--lv); color: #0b1410; font-size: 13px; }
+.afk-lv.on { background: color-mix(in srgb, var(--lv) 22%, transparent); box-shadow: 0 0 0 1px var(--lv) inset; }

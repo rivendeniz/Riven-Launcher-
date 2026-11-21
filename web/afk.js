@@ -10,7 +10,7 @@ const AFKGame = (() => {
   const W = 960, H = 540, T = 40;
   const PW = 24, PH = 44;
   const GRAV = 2300, FALLM = 1.28, VJ = 780, VJ2 = 690, MAXFALL = 1150, FASTFALL = 1500, JUMPCUT = 430;
-  const LIQ_Y = H - 52, COYOTE = 0.1, BUFFER = 0.13, BIOME_LEN = 450, STEP = 1 / 120, CAM_X = 280;
+  const LIQ_Y = H - 52, COYOTE = 0.1, BUFFER = 0.13, BIOME_LEN = 300, STEP = 1 / 120, CAM_X = 280;
   const MULT_COL = ['#ffffff', '#ffe066', '#ffb347', '#ff7a59', '#ff4d8d'];
 
   /* ------------------------------------------------------------ yardımcılar */
@@ -49,7 +49,17 @@ const AFKGame = (() => {
     ['skyTop', 'skyBot', 'hillA', 'hillB', 'cloud', 'floor', 'floorHi', 'farCol'].forEach((k) => { o[k + 'C'] = hex(b[k]); });
     return o;
   });
-  const biomeAt = (tx) => ((Math.max(0, tx) / BIOME_LEN) | 0) % 4;
+  /* 5 seviye: hız, boşluk zorluğu, diken sıklığı ve biyom sırası seviyeye göre değişir. */
+  const LEVELS = [
+    { n: 'Seviye 1', d: 'Çok kolay',     speed: 0.74, d0: 0.04, ramp: 0,    spk: 0.26, stones: true,  crumble: false, dbl: 0,    dblMax: 0,   biomes: [0, 1, 2], len: 250, col: '#a8e86a' },
+    { n: 'Seviye 2', d: 'Kolay',         speed: 0.90, d0: 0.18, ramp: 4000, spk: 0.40, stones: true,  crumble: true,  dbl: 0.08, dblMax: 1.2, biomes: [1, 2],    len: 280, col: '#ffd24a' },
+    { n: 'Seviye 3', d: 'Zor',           speed: 1.10, d0: 0.60, ramp: 2000, spk: 0.54, stones: true,  crumble: true,  dbl: 0.24, dblMax: 1.4, biomes: [2, 3, 2], len: 300, col: '#ff8a4a' },
+    { n: 'Seviye 4', d: 'İmkansız',      speed: 1.34, d0: 1,    ramp: 0,    spk: 0.66, stones: true,  crumble: true,  dbl: 0.50, dblMax: 1.7, biomes: [3, 2, 3], len: 300, col: '#ff4d6d' },
+  ];
+  let LV = LEVELS[0], lvIdx = 0, BLEN = LV.len;
+  const BI = (n) => LV.biomes[((n % LV.biomes.length) + LV.biomes.length) % LV.biomes.length];
+  const nextB = (tx) => BI(((Math.max(0, tx) / BLEN) | 0) + 1);
+  const biomeAt = (tx) => BI((Math.max(0, tx) / BLEN) | 0);
 
   /* Tek zıplamayla kapatılabilecek mesafeyi simüle eder: kalkış noktasından dy piksel yukarıdaki yüzeye inme süresi. */
   const AT = {};
@@ -61,7 +71,7 @@ const AFKGame = (() => {
     }
     AT[dy] = res;
   }
-  const speedAt = (tiles) => 300 + 230 * (1 - Math.exp(-tiles / 900));
+  const speedAt = (tiles) => LV.speed * (300 + 230 * (1 - Math.exp(-tiles / 900)));
 
   /* ------------------------------------------------------------ ses (WebAudio) */
   function makeAudio() {
@@ -109,9 +119,12 @@ const AFKGame = (() => {
   /* ------------------------------------------------------------ oyun durumu */
   const audio = makeAudio();
   let best = 0;
-  try { best = parseInt(localStorage.getItem('riven_afk_best') || '0', 10) || 0; } catch (_) { /* yoksay */ }
+  const bestKey = () => 'riven_parkour4_best_' + lvIdx;
+  const loadBest = () => { try { best = parseInt(localStorage.getItem(bestKey()) || '0', 10) || 0; } catch (_) { best = 0; } };
+  loadBest();
 
   let R = null;              // tek bir koşunun durumu (sayfa yenilense de korunur)
+  let syncLv = () => {};
   let mode = 'ready';        // ready | play | paused | dead
   let gen = null;            // parkur üretici durumu
   let time = 0;              // animasyon saati
@@ -125,9 +138,9 @@ const AFKGame = (() => {
     R = {
       px: 0, py: 0, vy: 0, onGround: true, air: false, airUsed: false, coyote: COYOTE, buffer: 0, held: false,
       sf: 1, sfT: 1, kl: false, kr: false, fast: false, fastKey: false, dust: 0,
-      score: 0, coins: 0, gaps: 0, near: 0, combo: 0, comboT: 0, bi: 0, bannerT: 3, banner: BIOMES[0].name,
+      score: 0, coins: 0, gaps: 0, near: 0, combo: 0, comboT: 0, bi: 0, bannerT: 3, banner: BIOMES[BI(0)].name,
       plats: [], coinList: [], parts: [], pops: [], lastPlat: null,
-      squash: 0, spinT: 9, run: 0, shake: 0, hidden: false, deadT: 0, reason: '', newBest: false, freeze: 0,
+      squash: 0, spinT: 9, run: 0, shake: 0, hidden: false, deadT: 0, reason: '', newBest: false, freeze: 0, hp: 3, inv: 0,
     };
     gen = { x: -320, h: 4, n: 0, mk: 0, bk: 0 };
     addPlat('col', 18, 4);
@@ -140,8 +153,8 @@ const AFKGame = (() => {
   function addPlat(kind, w, h, spikes = []) {
     const p = { x: gen.x, w, h, top: H - h * T, kind, spikes, crumbly: false, state: 0, timer: 0, mark: 0, gate: -1 };
     if (kind === 'col' && !spikes.length && w >= 3 && gen.n > 0) {     // 100 m tabelası / biyom kapısı
-      const bk = Math.floor(p.x / T / BIOME_LEN), mk = Math.floor(p.x / T / 100);
-      if (bk > gen.bk) { gen.bk = bk; gen.mk = mk; p.gate = bk % 4; }
+      const bk = Math.floor(p.x / T / BLEN), mk = Math.floor(p.x / T / 100);
+      if (bk > gen.bk) { gen.bk = bk; gen.mk = mk; p.gate = BI(bk); }
       else if (mk > gen.mk) { gen.mk = mk; p.mark = mk * 100; }
     }
     R.plats.push(p);
@@ -164,16 +177,16 @@ const AFKGame = (() => {
   function gapFor(dh, d, ease) {
     const maxG = 0.72 * speedAt(gen.x / T) * AT[dh];
     let g = lerp(2 * T, Math.max(2 * T, maxG), clamp(rnd() * (0.4 + 0.6 * d) * ease, 0, 1));
-    if (ease === 1 && d > 0.45 && dh <= 0 && rnd() < 0.22) g = maxG * (1.12 + rnd() * 0.3);
+    if (ease === 1 && dh <= 0 && rnd() < LV.dbl) g = maxG * (1.12 + rnd() * (LV.dblMax - 1.12 > 0 ? LV.dblMax - 1.12 : 0.1));
     return clamp(Math.round(g / T) * T, 2 * T, 9 * T);
   }
   function addSegment() {
-    const d = clamp(gen.x / T / 1500, 0, 1);
+    const d = clamp(LV.d0 + (LV.ramp ? gen.x / T / LV.ramp : 0), 0, 1);
     const r = rnd();
     let type = 'plain';
-    if (d > 0.08 && r < 0.12) type = 'crumble';
-    else if (d > 0.06 && r < 0.24) type = 'stones';
-    else if (r < 0.52) type = 'spikes';
+    if (LV.crumble && r < 0.12) type = 'crumble';
+    else if (LV.stones && r < 0.24) type = 'stones';
+    else if (r < 0.24 + LV.spk) type = 'spikes';
     else if (r < 0.68) type = 'stairs';
     const nh = clamp(gen.h + pick([-2, -1, -1, 0, 0, 1, 1, 2]), 3, 9);
     const g = gapFor(nh - gen.h, d, type === 'stones' || type === 'stairs' || type === 'crumble' ? 0.55 : 1);
@@ -186,7 +199,7 @@ const AFKGame = (() => {
       if (rnd() < 0.35) coinRow(p);
     } else if (type === 'spikes') {
       const w = 9 + ((rnd() * 4) | 0), sp = [3 + ((rnd() * 3) | 0)];
-      if (d > 0.3 && rnd() < 0.55 && sp[0] + 4 < w - 3) sp.push(sp[0] + 4 + ((rnd() * 2) | 0));
+      if (d > 0.3 && rnd() < (LV.d0 >= 1 ? 0.9 : 0.55) && sp[0] + 4 < w - 3) sp.push(sp[0] + 4 + ((rnd() * 2) | 0));
       const p = addPlat('col', w, nh, sp);
       sp.forEach((i) => coinArc(p.x + i * T - 6, p.x + (i + 1) * T + 6, p.top - 52, 38));
     } else if (type === 'stairs') {
@@ -250,6 +263,12 @@ const AFKGame = (() => {
   }
 
   /* ------------------------------------------------------------ oyun akışı */
+  function setLevel(i) {
+    lvIdx = clamp(i, 0, LEVELS.length - 1); LV = LEVELS[lvIdx]; BLEN = LV.len;
+    try { localStorage.setItem('riven_parkour4_level', String(lvIdx)); } catch (_) { /* yoksay */ }
+    loadBest(); mode = 'ready'; reset(); syncUI();
+  }
+  try { const sv = parseInt(localStorage.getItem('riven_parkour4_level') || '0', 10); if (sv > 0 && sv < LEVELS.length) { lvIdx = sv; LV = LEVELS[sv]; BLEN = LV.len; loadBest(); } } catch (_) { /* yoksay */ }
   function start() {
     reset();
     mode = 'play';
@@ -264,7 +283,7 @@ const AFKGame = (() => {
     R.deadT = 0; R.reason = reason; R.hidden = !liquid; R.shake = 0.45;
     const sc = Math.floor(R.score);
     R.newBest = sc > best && sc > 0;
-    if (R.newBest) { best = sc; try { localStorage.setItem('riven_afk_best', String(best)); } catch (_) { /* yoksay */ } }
+    if (R.newBest) { best = sc; try { localStorage.setItem(bestKey(), String(best)); } catch (_) { /* yoksay */ } }
     const b = BIOMES[biomeAt(R.px / T)];
     if (liquid) burst(R.px + PW / 2, LIQ_Y, 22, [rgb(b.floorC), rgb(b.floorHiC), '#ffffff'], 260, 320);
     else burst(R.px + PW / 2, R.py - PH / 2, 26, ['#e0ac82', '#2bb5b5', '#3b4fa0', '#6b4423'], 340, 220);
@@ -369,6 +388,23 @@ const AFKGame = (() => {
       }
     }
 
+    // End kristalleri: ölümcül değil, 1 can götürür (3 can; vurulunca kısa süre dokunulmaz)
+    if (R.inv > 0) R.inv = Math.max(0, R.inv - dt);
+    if (R.py < LIQ_Y && R.inv <= 0) {
+      for (const p of R.plats) {
+        if (p.x > R.px + 200 || p.x + p.w * T < R.px - 60 || biomeAt(p.x / T) !== 3) continue;
+        for (let i = 1; i <= p.w - 2; i++) {
+          if (!crystalAt(p, i)) continue;
+          const sx = p.x + i * T + 12, sw = 16, sy = p.top - 15;
+          if (R.px + PW - 6 > sx && R.px + 6 < sx + sw && R.py - 2 > sy && R.py - PH + 8 < p.top) {
+            R.hp--; R.combo = 0; R.inv = 1.4; R.shake = 0.25; audio.crumble();
+            burst(R.px + PW / 2, R.py - PH / 2, 14, ['#9b6fe0', '#d9b8ff', '#ff6b8a'], 220, 160); pop('-1 ♥', '#ff6b8a');
+            if (R.hp <= 0) { die('Kristale çarptın', false); return; }
+          }
+        }
+      }
+    }
+
     // altınlar
     const cx = R.px + PW / 2, cy = R.py - PH / 2;
     for (const c of R.coinList) {
@@ -384,10 +420,10 @@ const AFKGame = (() => {
     if (R.py > LIQ_Y + 6) { die(BIOMES[biomeAt(R.px / T)].dead, true); return; }
 
     // biyom değişimi
-    const bi = (Math.max(0, R.px / T) / BIOME_LEN) | 0;
+    const bi = (Math.max(0, R.px / T) / BLEN) | 0;
     if (bi !== R.bi) {
       R.bi = bi;
-      R.banner = BIOMES[bi % 4].name; R.bannerT = 3.2;
+      R.banner = BIOMES[BI(bi)].name; R.bannerT = 3.2;
       R.score += 100; audio.biome(); pop('+100', '#c8ffa8');
     }
     genAhead();
@@ -626,6 +662,13 @@ const AFKGame = (() => {
       }
     }
   }
+  /* End'deki küçük mor kristaller artık gerçek tehlike: hem çizim hem çarpışma aynı kuralı kullanır. İlk/son karoya konmaz. */
+  function crystalAt(p, i) {
+    if (p.gate >= 0 || p.mark || p.spikes.includes(i) || i < 1 || i > p.w - 2) return false;
+    const r = hash(Math.floor(p.x / T) + i, 41);
+    const big = p.kind === 'col' && !p.spikes.length && p.w >= 5 && i % 3 === 1 && r < 0.3;
+    return !big && r <= 0.22;
+  }
   /* Biyoma göre küçük süsler. Yalnızca görsel; çarpışması yok. Dikenli karolara konmaz. */
   function drawDecor(p, bi, sx) {
     const ti = Math.floor(p.x / T), y = p.top, bigOk = p.kind === 'col' && !p.spikes.length && p.w >= 5;
@@ -634,6 +677,7 @@ const AFKGame = (() => {
       const r = hash(ti + i, 41), c = hash(ti + i, 42), x = sx + i * T;
       const big = bigOk && i >= 1 && i <= p.w - 2 && i % 3 === 1 && r < 0.3;
       if (!big && r > 0.22) continue;
+      if (bi === 3 && !big && !crystalAt(p, i)) continue;
       if (bi === 0) {
         if (big) { // ağaç
           ctx.fillStyle = '#6b4423'; ctx.fillRect(x + 16, y - 56, 8, 56);
@@ -749,6 +793,16 @@ const AFKGame = (() => {
     ctx.restore();
   }
 
+  /* İki parçalı uzuv: üst parça + eklem (diz/dirsek) + alt parça. */
+  function limb2(px, py, w, l1, a1, l2, a2, col, tipCol, tipH) {
+    ctx.save(); ctx.translate(px, py); ctx.rotate(a1);
+    limb(0, 0, w, l1 + 1, 0, col, null, 0);
+    ctx.translate(0, l1); ctx.rotate(a2);
+    limb(0, 0, w - 0.6, l2, 0, col, tipCol, tipH);
+    ctx.fillStyle = 'rgba(0,0,0,.14)'; ctx.fillRect(-w / 2, -1, w, 2);          // eklem gölgesi
+    ctx.restore();
+  }
+
   function drawScarf(air, a, lean) {
     const n = 7, spd = clamp(R.sf || 1, 0.7, 1.5);
     const pts = [];
@@ -769,25 +823,27 @@ const AFKGame = (() => {
     const a = clamp(R.vy / 700, -1, 1), k = (a + 1) / 2;                 // -1 yükseliyor ... +1 düşüyor
     const sin = Math.sin(ph), cos = Math.cos(ph);
     const spd = clamp(R.sf || 1, 0.7, 1.5);
-    const lean = air ? clamp(R.vy / 2600, -0.12, 0.2) : 0.1 + (spd - 1) * 0.12;
-    const bob = air ? 0 : -Math.abs(sin) * 2.6;
+    const lean = (air ? clamp(R.vy / 2600, -0.12, 0.2) : 0.1 + (spd - 1) * 0.12) + R.squash * 0.18;
+    const bob = air ? 0 : -Math.abs(sin) * 3.2;
     // çift zıplama taklası
     const spin = air && R.spinT < 0.5 ? smooth(R.spinT / 0.5) * Math.PI * 2 : 0;
     // yer çekimi gölgesi (zemine yakınken karakterin altında yumuşak elips)
     ctx.save();
     ctx.translate(x + PW / 2, y);
-    ctx.scale(1 + R.squash * 0.35, 1 - R.squash * 0.35);
+    const br = mode === 'ready' || mode === 'paused' ? Math.sin(time * 2.6) * 0.014 : 0;   // bekleme nefesi
+    ctx.scale(1 + R.squash * 0.35 - br, 1 - R.squash * 0.35 + br);
     ctx.translate(0, bob);
     ctx.translate(0, -22); ctx.rotate(lean + spin); ctx.translate(0, 22);
-    const legB = air ? lerp(0.45, 0.32, k) : sin * 0.95;
-    const legF = air ? lerp(-0.95, -0.28, k) : -sin * 0.95;
-    const armF = air ? lerp(-2.6, -1.3, k) + Math.sin(time * 16) * 0.12 * k : sin * 0.9;
-    const armB = air ? lerp(-2.1, 1.4, k) - Math.sin(time * 16) * 0.12 * k : -sin * 0.9;
-    const kneeLift = air ? 0 : Math.max(0, -sin) * 2;
+    const A = 0.85;
+    const legBa = air ? lerp(0.5, 0.3, k) : sin * A, legBk = air ? lerp(1.15, 0.2, k) : 0.1 + Math.max(0, -cos) * 1.25;
+    const legFa = air ? lerp(-1.0, -0.25, k) : -sin * A, legFk = air ? lerp(0.55, 0.1, k) : 0.1 + Math.max(0, cos) * 1.25;
+    const armFa = air ? lerp(-2.6, -1.3, k) + Math.sin(time * 16) * 0.12 * k : sin * 0.95;
+    const armBa = air ? lerp(-2.1, 1.4, k) - Math.sin(time * 16) * 0.12 * k : -sin * 0.95;
+    const armFk = air ? -0.45 : -(0.5 + 0.55 * Math.max(0, -sin)), armBk = air ? -0.7 : -(0.5 + 0.55 * Math.max(0, sin));
     drawScarf(air, a, lean);
     // arka kol ve bacak (koyu tonlar)
-    limb(0, -30, 7, 13, armB, '#238f8f', '#c4936b', 4);
-    limb(-3, -14, 9, 14 - kneeLift, legB, '#2a3a7a', '#1b2248', 4);
+    limb2(0, -30, 7, 6.5, armBa, 6.5, armBk, '#238f8f', '#c4936b', 4);
+    limb2(-3, -14, 9, 7, legBa, 7, legBk, '#2a3a7a', '#1b2248', 4);
     // gövde
     ctx.fillStyle = '#2bb5b5'; ctx.fillRect(-10, -31, 20, 17);
     ctx.fillStyle = '#4fd6d6'; ctx.fillRect(-10, -31, 20, 4);
@@ -796,7 +852,7 @@ const AFKGame = (() => {
     ctx.fillStyle = '#1f6f6f'; ctx.fillRect(-10, -17, 20, 3);                // kemer
     ctx.fillStyle = '#ffd24a'; ctx.fillRect(-2, -17, 4, 3);                  // toka
     // ön bacak
-    limb(3, -14, 9, 14 + (air ? 0 : kneeLift * 0), legF, '#3b4fa0', '#20284f', 4);
+    limb2(3, -14, 9, 7, legFa, 7, legFk, '#3b4fa0', '#20284f', 4);
     // kafa (hafif sekme ve gövde eğimine ters dönüş)
     ctx.save(); ctx.translate(0, -31); ctx.rotate(-lean * 0.6 + (air ? -a * 0.08 : sin * 0.03)); ctx.translate(0, 31);
     ctx.fillStyle = '#e0ac82'; ctx.fillRect(-9, -PH, 18, 14);
@@ -811,7 +867,7 @@ const AFKGame = (() => {
     ctx.fillStyle = '#c9855f'; ctx.fillRect(-1, -PH + 11, 5, 1.5);           // ağız
     ctx.restore();
     // ön kol
-    limb(0, -30, 7, 13, armF, '#2bb5b5', '#e0ac82', 4);
+    limb2(0, -30, 7, 6.5, armFa, 6.5, armFk, '#2bb5b5', '#e0ac82', 4);
     ctx.restore();
   }
 
@@ -820,6 +876,13 @@ const AFKGame = (() => {
     txt(String(sc), 24, 46, 38);
     txt(`${Math.floor(R.px / T)} m   ●  ${R.coins}`, 26, 72, 17, '#e8f3ec', 'left', 700);
     txt(T_('REKOR') + ' ' + Math.max(best, sc), W - 24, 36, 18, '#ffe066', 'right');
+    for (let k = 0; k < 3; k++) {       // canlar
+      const hx = 28 + k * 28, hy = 96, on = k < R.hp;
+      ctx.save(); ctx.translate(hx, hy); ctx.globalAlpha = on ? 1 : 0.28;
+      ctx.fillStyle = on ? '#ff4d6d' : '#8b93a3'; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, 6); ctx.bezierCurveTo(-14, -4, -8, -14, 0, -6); ctx.bezierCurveTo(8, -14, 14, -4, 0, 6); ctx.closePath();
+      ctx.stroke(); ctx.fill(); ctx.restore();
+    }
     if (R.combo > 0) {
       txt('x' + m, W - 24, 76, 40, MULT_COL[m - 1], 'right');
       const wbar = 110, fillW = wbar * clamp(R.comboT / 4, 0, 1);
@@ -827,10 +890,10 @@ const AFKGame = (() => {
       ctx.fillStyle = MULT_COL[m - 1]; if (fillW > 1) { rr(W - 24 - wbar, 86, fillW, 8, 4); ctx.fill(); }
     }
     {
-      const tiles = Math.max(0, R.px / T), idx = biomeAt(tiles), frac = (tiles % BIOME_LEN) / BIOME_LEN, bw = 200, bx = (W - bw) / 2;
+      const tiles = Math.max(0, R.px / T), idx = biomeAt(tiles), frac = (tiles % BLEN) / BLEN, bw = 200, bx = (W - bw) / 2;
       ctx.fillStyle = 'rgba(0,0,0,.4)'; rr(bx, 16, bw, 8, 4); ctx.fill();
-      ctx.fillStyle = rgb(BIOMES[(idx + 1) % 4].floorHiC); if (frac > 0.01) { rr(bx, 16, bw * frac, 8, 4); ctx.fill(); }
-      txt(T_(BIOMES[idx].name) + '  ›  ' + T_(BIOMES[(idx + 1) % 4].name), W / 2, 42, 13, '#e8f3ec', 'center', 700);
+      ctx.fillStyle = rgb(BIOMES[nextB(tiles)].floorHiC); if (frac > 0.01) { rr(bx, 16, bw * frac, 8, 4); ctx.fill(); }
+      txt(T_(BIOMES[idx].name) + '  ›  ' + T_(BIOMES[nextB(tiles)].name), W / 2, 42, 13, '#e8f3ec', 'center', 700);
     }
     if (Math.abs(R.sf - 1) > 0.06) txt(T_('Hız') + ' x' + R.sf.toFixed(2), 26, 98, 14, R.sf > 1 ? '#ff9a7a' : '#9be7ff', 'left', 700);
     if (R.bannerT > 0) {
@@ -850,8 +913,8 @@ const AFKGame = (() => {
     if (mode === 'ready') {
       ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.fillRect(0, 0, W, H);
       const y = panel(470, 250);
-      txt(T_('AFK PARKURU'), W / 2, y + 62, 40, '#ffffff', 'center');
-      txt(T_('Sonsuz parkur • 4 biyom • kombo puanı'), W / 2, y + 94, 16, '#b9d3c4', 'center', 600);
+      txt(T_('PARKUR'), W / 2, y + 62, 40, '#ffffff', 'center');
+      txt(T_(LV.n) + ' • ' + T_(LV.d), W / 2, y + 94, 18, LV.col, 'center', 800);
       txt(T_('Boşluk / ↑ : zıpla (havada bir kez daha)'), W / 2, y + 136, 17, '#e8f3ec', 'center', 600);
       txt(T_('← →  yavaşla / hızlan     ↓  hızlı düş'), W / 2, y + 162, 17, '#e8f3ec', 'center', 600);
       ctx.save(); ctx.globalAlpha = pulse;
@@ -881,8 +944,8 @@ const AFKGame = (() => {
   }
 
   function draw() {
-    const tiles = Math.max(0, R.px / T), idx = biomeAt(tiles), nxt = (idx + 1) % 4;
-    const frac = tiles / BIOME_LEN - Math.floor(tiles / BIOME_LEN);
+    const tiles = Math.max(0, R.px / T), idx = biomeAt(tiles), nxt = nextB(tiles);
+    const frac = tiles / BLEN - Math.floor(tiles / BLEN);
     const t = frac > 0.93 ? smooth((frac - 0.93) / 0.07) : 0;
     const A = BIOMES[idx], B = BIOMES[nxt];
     view = { cam: R.px - CAM_X, A, B, t };
@@ -928,7 +991,7 @@ const AFKGame = (() => {
     fog.addColorStop(0, rgba(col('floorHi'), 0)); fog.addColorStop(1, rgba(col('floorHi'), 0.3));
     ctx.fillStyle = fog; ctx.fillRect(0, LIQ_Y - 70, W, H - LIQ_Y + 70);
 
-    drawPlayer();
+    { ctx.save(); if (R.inv > 0 && Math.floor(R.inv * 14) % 2 === 0) ctx.globalAlpha = 0.35; drawPlayer(); ctx.restore(); }
 
     for (const p of R.parts) {
       ctx.globalAlpha = clamp(p.life / 0.4, 0, 1);
@@ -1005,6 +1068,7 @@ const AFKGame = (() => {
     else if (k === 'p' || k === 'P' || k === 'Escape') { if (mode === 'play') pause(); else if (mode === 'paused') resume(); }
     else if ((k === 'r' || k === 'R' || k === 'Enter') && (mode === 'dead' || mode === 'paused' || mode === 'ready')) { if (mode !== 'dead' || R.deadT > 0.3) start(); }
     else if (k === 'm' || k === 'M') toggleMute();
+    else if (k >= '1' && k <= '4' && mode !== 'play') { setLevel(+k - 1); syncLv(); }
   }
   function onKeyUp(e) {
     if (!R) return;
@@ -1057,12 +1121,17 @@ const AFKGame = (() => {
     ui.full = h('button', { class: 'btn small', onclick: (e) => { setFull(!isFull()); e.currentTarget.blur(); } }, 'Tam ekran');
     syncUI();
 
-    const keys = [['Boşluk / ↑ / Tık', 'Zıpla (havada bir kez daha)'], ['↓ / S', 'Hızlı düş'], ['← → / A D', 'Yavaşla / hızlan'],
+    const keys = [['1-4', 'Seviye seç'], ['Boşluk / ↑ / Tık', 'Zıpla (havada bir kez daha)'], ['↓ / S', 'Hızlı düş'], ['← → / A D', 'Yavaşla / hızlan'],
       ['P', 'Duraklat'], ['R', 'Yeniden başla'], ['F', 'Tam ekran'], ['M', 'Ses']];
     const head = h('header', { class: 'page-head' },
-      h('div', {}, h('h1', {}, 'AFK Bölgesi'),
-        h('p', { class: 'sub' }, 'Oyun yüklenirken ya da beklerken vakit geçir: sonsuz parkurda en yüksek puanı yap.')),
+      h('div', {}, h('h1', {}, 'Parkur'),
+        h('p', { class: 'sub' }, 'Oyun yüklenirken ya da beklerken vakit geçir: 4 seviyeli parkurda en yüksek puanı yap.')),
       h('div', { style: 'display:flex;gap:8px;align-items:center' }, ui.pause, ui.full, ui.mute));
+    const lvBtns = LEVELS.map((L, i) => h('button', { class: 'btn small afk-lv', style: `--lv:${L.col}`, onclick: (e) => { setLevel(i); syncLv(); e.currentTarget.blur(); } },
+      h('b', {}, String(i + 1)), h('span', {}, T_(L.d))));
+    syncLv = () => lvBtns.forEach((b, i) => b.classList.toggle('on', i === lvIdx));
+    syncLv();
+    const lvBar = h('div', { class: 'afk-levels' }, lvBtns);
     const wrap = h('div', { class: 'panel afk-wrap' }, canvas);
     wrapEl = wrap;
     const help = h('div', { class: 'afk-keys' },
@@ -1076,7 +1145,7 @@ const AFKGame = (() => {
     document.addEventListener('fullscreenchange', onFsChange);
     last = 0; acc = 0;
     raf = requestAnimationFrame(frame);
-    return [head, wrap, help];
+    return [head, lvBar, wrap, help];
   }
 
   return { page, stop };

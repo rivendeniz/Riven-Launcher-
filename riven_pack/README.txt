@@ -21,3 +21,6 @@ sekme, kaydırıcı ve HUD dokularının tamamını boyar. Logonun altındaki "L
 V51: İki renk seçeneği ayrıldı. "Görünüm ve dil" bölümündeki renk yalnızca launcher arayüzünü, "Oyun Arayüzü Teması > Vurgu rengi"
 yalnızca oyun içi resource pack'i boyar (önceden pack rengi launcher'ı da boyuyordu). Buton dokuları inceltildi/parlatıldı ve
 "LAUNCHER" rozeti logodaki kalın 7x9 fontla, konturlu ve degrade dolgulu olarak büyütüldü.
+
+V52 (launcher 1.8.5): LAUNCHER rozeti ve RIVEN logosu zümrüt bloklardan çizilir (düzgün "C", logo biraz büyük). Butonlar GUI ölçeği 3 için
+inceltildi (daha ince alt çizgi/gölge/hale); GUI 2'de de daha temiz görünür. Renk seçenekleri ayrı kalır: launcher rengi / oyun paketi rengi.

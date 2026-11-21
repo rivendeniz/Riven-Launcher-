@@ -25,7 +25,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-UI_VERSION = 51
+UI_VERSION = 53
 DEFAULT_ACCENT = "#22c55e"
 
 # (anahtar, görünen ad, renk) - launcher arayüzünde aynı sırayla gösterilir
@@ -319,14 +319,14 @@ def _accent_footer(img, p, alpha=120, rows=2):
         hline(img, 3, img.w - 3, y, (*p["mid"], a))
 
 
-def _glow(img, p, strength=0.30, tint=None):
+def _glow(img, p, strength=0.30, tint=None, reach=4.0):
     """Alt kenara doğru yoğunlaşan hafif vurgu halesi (hover)."""
     tint = p["mid"] if tint is None else tint
     for y in range(1, img.h - 1):
         vert = 0.30 + 0.70 * ((y - 1) / max(1, img.h - 3)) ** 1.5
         for x in range(1, img.w - 1):
             edge = min(x, img.w - 1 - x, y, img.h - 1 - y)
-            k = max(0.0, 1.0 - edge / 6.0) ** 2 * strength * vert
+            k = max(0.0, 1.0 - edge / reach) ** 2 * strength * vert
             if k > 0:
                 img.put(x, y, (*tint, int(k * 255)))
 
@@ -347,8 +347,8 @@ def t_button(p, kind):
         vgrad(img, 0, 0, 200, 20, (*p["mid"], 18), (*p["accent"], 30), radius=3)
         _glow(img, p, 0.30)
         _rim(img, p, 3, p["rim"], 215)
-        _inner_light(img, p, 54)
-        _accent_footer(img, p, 205, 2)
+        _inner_light(img, p, 46)
+        _accent_footer(img, p, 190, 1)
         # köşe kristalleri
         for (x, y) in ((2, 2), (197, 2), (2, 17), (197, 17)):
             img.put(x, y, (*p["hi"], 140))
@@ -361,7 +361,7 @@ def t_button(p, kind):
         _inner_light(img, p, 44)
         hline(img, 3, 197, 2, (*p["warm"], 12))        # cam yansıması: ikinci ince parlak satır
         _accent_footer(img, p, 96, 1)
-    _bottom_shadow(img, p, 58 if kind == "hover" else (38 if dim else 64), 2)
+    _bottom_shadow(img, p, 50 if kind == "hover" else (34 if dim else 54), 1)
     return img
 
 
@@ -516,24 +516,25 @@ def t_separator(p):
 
 
 def t_tile(p, alpha=255, inworld=False, legacy=False):
-    """Kusursuz döşenen 16x16 menü zemini: obsidyen + ince vurgu dokusu."""
+    """Kusursuz döşenen 16x16 menü zemini: derin kaya tuğlaları, ince harç çizgileri ve vurgu renginde kristal parıltıları."""
     img = Img(16, 16)
-    base = mix(p["ink"], p["bot"], 0.55 if inworld else 0.35)
+    base = mix(p["ink"], p["bot"], 0.55 if inworld else 0.40)
     if legacy:                       # 1.20.1 ve öncesi oyun %25 parlaklıkla çizer
         base = mix(base, (255, 255, 255), 0.58)
     rng = _seed(p["mode"], p["accent"], inworld, legacy)
+    glints = ((5, 3), (12, 11), (2, 13))
     for y in range(16):
         for x in range(16):
             v = ((rng >> ((x * 7 + y * 3) % 23)) & 3) - 1.5
-            edge = 1.0 if min(x, y, 15 - x, 15 - y) > 0 else 0.72
-            k = 1.0 + v * 0.010
-            c = (base[0] * k, base[1] * k, base[2] * k)
-            a = int(alpha * edge)
-            img.put(x, y, (*c, a))
-    # köşe vurguları: döşemede ızgara hissi veren çok soluk artı
-    img.put(0, 0, (*p["mid"], 18 if not legacy else 34))
-    img.put(0, 1, (*p["mid"], 12 if not legacy else 24))
-    img.put(1, 0, (*p["mid"], 12 if not legacy else 24))
+            c = shade(base, 1.0 + v * 0.018 + (0.045 if ((x // 8) + (y // 8)) % 2 else 0.0))   # tuğla başına hafif ton farkı
+            joint = x % 8 == (4 if (y // 8) % 2 else 0)
+            if y % 8 == 0 or joint:
+                c = mix(c, p["ink"], 0.42)                                  # harç
+            elif y % 8 == 1:
+                c = mix(c, p["mid"], 0.07)                                  # tuğla üst ışığı
+            if (x, y) in glints:
+                c = mix(c, p["hi"], 0.34 if not legacy else 0.5)           # kristal parıltısı
+            img.put(x, y, (*c, alpha))
     return img
 
 
@@ -556,7 +557,14 @@ def t_overlay(mode, p):
             # renk yıkaması: üstte vurgu, altta mürekkep
             tint = mix(p["ink"], p["accent"], (0.10 + 0.20 * (1 - t)) * wash / 0.075)
             col = mix(p["ink"], tint, 0.55 if t < 0.45 else 0.30)
-            img.put(x, y, (*col, int(a * 255)))
+            # yumuşak ışık: üst ortada ferah bir hale, alt ortada vurgu renginde parıltı
+            g = math.exp(-(((u - 0.5) * 2.1) ** 2) - (t / 0.34) ** 2) * (0.10 if day else 0.14) \
+                + math.exp(-(((t - 1.0) / 0.13) ** 2) - (((u - 0.5) * 1.5) ** 2)) * (0.16 if day else 0.22)
+            if g > 0.002:
+                na = a + g * (1.0 - a)
+                col = tuple((col[k] * a + p["mid"][k] * g * (1.0 - a)) / na for k in range(3))
+                a = na
+            img.put(x, y, (*col, int(min(0.95, a) * 255)))
     # üstte ince vurgu çizgisi (logo arkasında ferahlık)
     for x in range(w):
         u = x / (w - 1)
@@ -689,43 +697,67 @@ def _wordmark_mask(word, gap=3):
     return cells, max(1, x - gap), 9
 
 
+_E5 = {
+    "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    "A": (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "N": ("#...#", "##..#", "##..#", "#.#.#", "#..##", "#..##", "#...#"),
+    "C": (".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."),
+    "H": ("#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "E": ("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    "R": ("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+}
+
+
+def _emerald_block(img, x0, y0, x1, y1, p, t, seed=0):
+    """Tek bir zümrüt blok: koyu dış çerçeve, açık üst-sol pah, iç yüz ve parıltı (rengi vurgu rengi belirler)."""
+    w, h = x1 - x0, y1 - y0
+    base = mix(p["hi"], p["accent"], t / 0.55) if t < 0.55 else mix(p["accent"], p["lo"], (t - 0.55) / 0.45)
+    base = shade(base, 1.0 + ((seed & 7) - 3.5) * 0.012)
+    white = (255, 255, 255)
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            dx, dy = x - x0, y - y0
+            col = base
+            if w >= 4 and h >= 4:
+                r = min(dx, dy, w - 1 - dx, h - 1 - dy)
+                tl = dx <= dy and dx < w - 1 - dx or dy < dx and dy < h - 1 - dy
+                if r == 0:
+                    col = mix(base, white, 0.55) if (dx == 0 or dy == 0) else shade(base, 0.52)
+                elif r == 1:
+                    col = mix(base, white, 0.20) if (dx == 1 or dy == 1) else shade(base, 0.80)
+                elif dx + dy < (w + h) / 2 - 1:
+                    col = mix(base, white, 0.14)           # yüz yansıması (elmas/zümrüt kesimi)
+                if dx == 2 and dy == 2 and seed % 3 == 0:
+                    col = mix(base, white, 0.85)           # parıltı
+            else:
+                if dx == 0 and dy == 0:
+                    col = mix(base, white, 0.45)
+                elif dy == h - 1:
+                    col = shade(base, 0.74)
+            img.put(x, y, (*col, 255))
+
+
 def make_logo(p, modern=True, canvas=(256, 64), word="RIVEN"):
-    """Kristal voxel wordmark: degrade, pah (bevel), kontur, hale ve alt çizgi."""
+    """Zümrüt bloklardan yazılmış 'RIVEN' wordmark: her harf hücresi ayrı blok, mürekkep konturu ve hafif hale."""
     cw, ch = canvas
     img = Img(cw, ch)
-    scale = 4
-    cells, ww_cells, hh_cells = _wordmark_mask(word)
-    ww, hh = ww_cells * scale, hh_cells * scale
-    ox = (cw - ww) // 2
-    oy = 2 if modern else 1   # alttaki LAUNCHER rozeti 37. satırdan başlar
-    # tam çözünürlüklü maske: bloklar arasında dikiş kalmadan kaynaşır
+    SX, SY = 4.2, 3.6                         # hücre en/boy (px): LAUNCHER rozetiyle çakışmasın diye boy kısa tutuldu
+    cells, wc, hc = _wordmark_mask(word)
+    ox = (cw - int(wc * SX)) // 2
+    oy = 1
+    X = lambda c: ox + int(c * SX)
+    Y = lambda r: oy + int(r * SY)
     mask = bytearray(cw * ch)
     for (cx, cy) in cells:
-        bx, by = ox + cx * scale, oy + cy * scale
-        for yy in range(scale):
-            row = (by + yy) * cw
-            for xx in range(scale):
-                mask[row + bx + xx] = 1
+        for yy in range(Y(cy), Y(cy + 1)):
+            for xx in range(X(cx), X(cx + 1)):
+                if 0 <= xx < cw and 0 <= yy < ch:
+                    mask[yy * cw + xx] = 1
 
     def at(x, y):
         return 0 <= x < cw and 0 <= y < ch and mask[y * cw + x]
 
-    # köşeleri pahla: dış (dışbükey) köşe pikselleri iki geçişte kaldırılır; ince kollar bozulmaz
-    for _pass in range(2):
-        _snap = bytes(mask)
-        def _s(x, y):
-            return 0 <= x < cw and 0 <= y < ch and _snap[y * cw + x]
-        for y in range(ch):
-            for x in range(cw):
-                if not _snap[y * cw + x]:
-                    continue
-                for sx in (-1, 1):
-                    for sy in (-1, 1):
-                        if not (_s(x + sx, y) or _s(x + 2 * sx, y) or _s(x, y + sy)
-                                or _s(x, y + 2 * sy) or _s(x + sx, y + sy)):
-                            mask[y * cw + x] = 0
-
-    # 3 px vurgu halesi + 1 px mürekkep konturu
     for y in range(ch):
         for x in range(cw):
             if at(x, y):
@@ -734,79 +766,35 @@ def make_logo(p, modern=True, canvas=(256, 64), word="RIVEN"):
             for dy in range(-3, 4):
                 for dx in range(-3, 4):
                     d = abs(dx) + abs(dy)
-                    if d <= 3 and at(x + dx, y + dy) and d < best:
+                    if d <= 3 and d < best and at(x + dx, y + dy):
                         best = d
             if best > 3 and (at(x - 1, y - 2) or at(x - 2, y - 3) or at(x - 1, y - 3)):
-                img.put(x, y, (*p["ink"], 70))     # yumuşak gölge
+                img.put(x, y, (*p["ink"], 70))
             if best <= 1:
                 img.put(x, y, (*p["ink"], 245))
             elif best <= 3:
                 img.put(x, y, (*p["accent"], 26 if best == 3 else 44))
 
     rng = _seed(p["accent"], p["mode"], "logo")
-    block_noise = {}
     for (cx, cy) in cells:
-        block_noise[(cx, cy)] = (((rng >> ((cx * 7 + cy * 13) % 29)) & 7) - 3.5) * 0.008
-    for y in range(ch):
-        for x in range(cw):
-            if not mask[y * cw + x]:
-                continue
-            t = (y - oy) / max(1, hh)
-            col = mix(p["hi"], p["accent"], t / 0.52) if t < 0.52 else mix(p["accent"], p["lo"], (t - 0.52) / 0.48)
-            # yerel blok kırılması (dikişsiz)
-            n = block_noise.get(((x - ox) // scale, (y - oy) // scale), 0.0)
-            col = shade(col, 1.0 + n)
-            # yalnızca dış konturda pah
-            top = not at(x, y - 1)
-            left = not at(x - 1, y)
-            bottom = not at(x, y + 1)
-            right = not at(x + 1, y)
-            if top or left:
-                col = mix(col, (255, 255, 255), 0.34 if (top and left) else 0.24)
-            elif not at(x, y - 2) or not at(x - 2, y):
-                col = mix(col, (255, 255, 255), 0.10)          # 2. pah satırı
-            if bottom or right:
-                col = mix(col, (0, 0, 0), 0.34 if (bottom and right) else 0.22)
-            elif not at(x, y + 2) or not at(x + 2, y):
-                col = mix(col, (0, 0, 0), 0.10)
-            # üst yarıda cam parlaması bandı
-            gl = 0.20 - abs(t - 0.20)
-            if gl > 0 and not (top or left):
-                col = mix(col, (255, 255, 255), min(0.22, gl * 1.1))
-            # çapraz cam parlaması
-            if (x - y * 2) % 83 < 9:
-                col = mix(col, (255, 255, 255), 0.055)
-            img.put(x, y, (*col, 255))
+        _emerald_block(img, X(cx), Y(cy), X(cx + 1), Y(cy + 1), p, cy / hc, (rng >> ((cx * 7 + cy * 13) % 29)) & 0xFF)
     return img
 
 
 def make_edition(p):
-    """RIVEN logosunun altındaki 'LAUNCHER' yazısı. Oyun dokunun yalnızca sol 98x14 bölümünü
-    çizer (doku 128x16). Yazı, logodaki kalın 7x9 fontun 12 px yüksekliğe ölçeklenmiş hâlidir
-    (RIVEN'ın üçte biri boyunda); 1 px mürekkep konturu ve degrade dolgu içerir."""
+    """RIVEN logosunun altındaki 'LAUNCHER' yazısı. Oyun dokunun yalnızca sol 98x14 bölümünü çizer (doku 128x16).
+    Yazı 5x7 harf ızgarasından, her hücre 2x2 px'lik küçük bir zümrüt blok olarak çizilir (94x14 px, düzgün 'C' dahil)."""
     img = Img(128, 16)
-    W, H, TH = 98, 14, 12
-    cells, sw, sh = _wordmark_mask("LAUNCHER", gap=2)
-    src = set(cells)
-    cw = (sw * TH) // sh                     # ölçeklenmiş genişlik
-    ox, oy = (W - cw) // 2, H - TH - 1 if False else 1
-    mask = set()
-    for Y in range(TH):
-        for X in range(cw):
-            if (X * sw // cw, Y * sh // TH) in src:
-                mask.add((ox + X, oy + Y))
-    for (x, y) in mask:
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                q = (x + dx, y + dy)
-                if q not in mask and 0 <= q[0] < W and 0 <= q[1] < H:
-                    img.put(q[0], q[1], (*p["ink"], 235))
-    for (x, y) in mask:
-        t = (y - oy) / max(1, TH - 1)
-        col = mix(p["hi"], p["accent"], t * 1.25) if t < 0.8 else mix(p["accent"], p["lo"], (t - 0.8) / 0.2)
-        if (x, y - 1) not in mask:
-            col = mix(col, (255, 255, 255), 0.22)
-        img.put(x, y, (*col, 255))
+    text, cs, gap = "LAUNCHER", 2, 2
+    ox = (98 - (len(text) * 5 * cs + (len(text) - 1) * gap)) // 2
+    n = 0
+    for i, chn in enumerate(text):
+        lx = ox + i * (5 * cs + gap)
+        for ry, row in enumerate(_E5[chn]):
+            for rx, v in enumerate(row):
+                if v == "#":
+                    n += 1
+                    _emerald_block(img, lx + rx * cs, ry * cs, lx + rx * cs + cs, ry * cs + cs, p, 0.12 + ry / 7 * 0.55, n * 5)
     return img
 
 

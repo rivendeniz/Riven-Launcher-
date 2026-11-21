@@ -4,7 +4,7 @@
 ; Sessiz kurulumda (/VERYSILENT - otomatik guncelleme) hicbir pencere acilmaz.
 #define AppName "Riven Launcher"
 #ifndef AppVersion
-  #define AppVersion "1.5.2"
+  #define AppVersion "1.8.5"
 #endif
 #define AppExe "RivenLauncher.exe"
 

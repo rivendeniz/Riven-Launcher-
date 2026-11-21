@@ -23,7 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
-      # Her push'a otomatik yapi numarasi eklenir (1.7.0 -> 1.7.0.<run>): sürümü elle artırmayı unutsan da
+      # Her push'a otomatik yapi numarasi eklenir (1.8.5 -> 1.8.5.<run>): sürümü elle artırmayı unutsan da
       # yeni Release her seferinde eskisinden büyük olur ve launcher otomatik güncellenir. Numara derlemeden ÖNCE
       # riven.py'ye yazılır; böylece kurulan exe kendi sürümünü doğru bilir ve güncelleme döngüsüne girmez.
       - name: Surumu belirle ve riven.py'ye yaz

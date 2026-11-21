@@ -165,11 +165,12 @@ function renderUpdateBar(u) {
   if (!active) { if (bar) bar.remove(); return; }
   if (!bar) { bar = h('div', { id: 'update-bar', class: 'update-bar' }); document.body.append(bar); }
   const pct = Math.round((u.progress || 0) * 100);
-  const text = u.state === 'downloading' ? `Yeni sürüm ${u.version} indiriliyor... %${pct}`
-    : u.state === 'installing' ? `Sürüm ${u.version} kuruluyor, launcher yeniden açılacak...`
-    : u.state === 'waiting' ? `Sürüm ${u.version} hazır, oyun kapanınca güncellenecek.`
-    : u.state === 'error' ? `Otomatik güncelleme başarısız: ${u.message || 'bilinmeyen hata'} (10 dk sonra tekrar denenecek)`
-    : (u.message || `Yeni sürüm ${u.version} mevcut.`);
+  const en = LANG === 'en';
+  const text = u.state === 'downloading' ? (en ? `Downloading new version ${u.version}... ${pct}%` : `Yeni sürüm ${u.version} indiriliyor... %${pct}`)
+    : u.state === 'installing' ? (en ? `Installing version ${u.version}, the launcher will reopen...` : `Sürüm ${u.version} kuruluyor, launcher yeniden açılacak...`)
+    : u.state === 'waiting' ? (en ? `Version ${u.version} is ready, it will update when the game closes.` : `Sürüm ${u.version} hazır, oyun kapanınca güncellenecek.`)
+    : u.state === 'error' ? (en ? `Auto-update failed: ${u.message || 'unknown error'} (will retry in 5 min)` : `Otomatik güncelleme başarısız: ${u.message || 'bilinmeyen hata'} (5 dk sonra tekrar denenecek)`)
+    : (en ? `A new version ${u.version} is available.` : (u.message || `Yeni sürüm ${u.version} mevcut.`));
   bar.textContent = '';
   bar.append(h('span', {}, text));
   if (u.state === 'downloading') bar.append(h('i', { style: `width:${pct}%` }));
@@ -241,7 +242,7 @@ function renderStatus() {
 
 /* ---------------------------------------------------------------- yönlendirme */
 const NAV = [['browse', 'compass', 'Keşfet (Modrinth / CurseForge)'], ['console', 'terminal', 'Konsol'],
-  ['afk', 'gamepad', 'AFK Bölgesi'], ['account', 'user', 'Hesap ve Discord']];
+  ['afk', 'gamepad', 'Parkur'], ['account', 'user', 'Hesap ve Discord']];
 let currentRoute = { name: 'home' };
 let routeSeq = 0;
 let lastRendered = null;
