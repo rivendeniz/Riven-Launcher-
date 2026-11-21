@@ -71,6 +71,10 @@ except ImportError:  # keyring yoksa Microsoft oturumu hatırlanmaz
     keyring = None
 
 APP = "Riven Launcher"
+# Mobil mod (Termux/Android): arayüz ve tüm yönetim işlevleri çalışır, yalnızca oyun BAŞLATILAMAZ.
+# "--mobil" ile ya da Termux'ta otomatik açılır.
+MOBILE = ("--mobil" in sys.argv) or os.environ.get("RIVEN_MOBIL") == "1" or bool(os.environ.get("TERMUX_VERSION"))
+MOBILE_PORT = int(os.environ.get("RIVEN_PORT", "8780"))
 APP_VERSION = "1.8.5"
 # Otomatik güncelleme: GitHub "kullanici/depo" adını yaz (ör. "riven/RivenLauncher").
 # Boş bırakırsan otomatik güncelleme kapalı kalır. Depo herkese açık (public) olmalı.
@@ -82,7 +86,7 @@ INSTANCES_DIR = HOME_DIR / "instances"
 CONFIG_FILE = HOME_DIR / "config.json"
 INSTANCES_FILE = HOME_DIR / "instances.json"
 # PyInstaller exe'sinde dosyalar geçici klasöre (_MEIPASS) açılır
-BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+BASE_DIR = Path(os.environ.get("RIVEN_BASE") or getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))   # RIVEN_BASE: Android APK
 WEB_DIR = BASE_DIR / "web"
 SHARED_DIR = str(mll.utils.get_minecraft_directory())  # kütüphaneler/asset'ler ortak
 RIVEN_MODS_DIR = BASE_DIR / "mods"  # launcher ile gelen gömülü modlar (örn. riventag)
@@ -2078,7 +2082,7 @@ def r_state(m, q, b):
         "ui_glass": CFG.get("ui_glass", 62),
         "ui_hud": CFG.get("ui_hud", True),
         "ui_presets": [list(p) for p in RIVEN_PRESETS],
-        "update": dict(UPDATE), "app_version": APP_VERSION,
+        "update": dict(UPDATE), "app_version": APP_VERSION, "mobile": MOBILE,
     }
 
 
@@ -2274,6 +2278,8 @@ def r_delete(m, q, b):
 @route("POST", f"/instances/{ID}/launch")
 def r_launch(m, q, b):
     inst = get_instance(valid_id(m.group(1)))
+    if MOBILE:
+        raise ApiError("Mobil sürümde Minecraft başlatılamaz. Oyunu Windows/Linux sürümünden aç.")
     with LAUNCH_LOCK:
         if inst["id"] in RUNNING:
             raise ApiError("Bu instance zaten çalışıyor.")
@@ -2290,12 +2296,7 @@ def r_folder(m, q, b):
     inst = get_instance(valid_id(m.group(1)))
     path = instance_dir(inst)
     path.mkdir(parents=True, exist_ok=True)
-    if sys.platform.startswith("win"):
-        os.startfile(str(path))  # noqa: S606
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", str(path)])
-    else:
-        subprocess.Popen(["xdg-open", str(path)])
+    open_path(path)
     return {"ok": True}
 
 
@@ -3488,6 +3489,8 @@ def open_path(path):
         os.startfile(str(path))  # noqa: S606
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(path)])
+    elif MOBILE or not shutil.which("xdg-open"):
+        raise ApiError(f"Klasör burada açılamıyor. Konum: {path}")
     else:
         subprocess.Popen(["xdg-open", str(path)])
 
@@ -4333,6 +4336,7 @@ STATIC = {"/app.js": ("app.js", "text/javascript; charset=utf-8"),
           "/afk.js": ("afk.js", "text/javascript; charset=utf-8"),
           "/style.css": ("style.css", "text/css; charset=utf-8"),
           "/polish.css": ("polish.css", "text/css; charset=utf-8"),
+          "/mobile.css": ("mobile.css", "text/css; charset=utf-8"),
           "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
           "/favicon-32.png": ("favicon-32.png", "image/png"),
           "/favicon-180.png": ("favicon-180.png", "image/png"),
@@ -4801,12 +4805,13 @@ def main():
     save_cfg()
     auto_login()
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    httpd = ThreadingHTTPServer(("127.0.0.1", MOBILE_PORT if MOBILE else 0), Handler)
     SERVER.update(port=httpd.server_address[1], httpd=httpd)
     url = f"http://127.0.0.1:{SERVER['port']}/"
     print(f"{APP} çalışıyor: {url}  (kapatmak için pencereyi kapat veya Ctrl+C)")
     threading.Thread(target=install_riven_tag_all, daemon=True).start()
-    threading.Thread(target=update_worker, daemon=True).start()
+    if sys.platform.startswith("win") and not MOBILE:   # otomatik güncelleme yalnızca Windows Setup.exe içindir
+        threading.Thread(target=update_worker, daemon=True).start()
     threading.Thread(target=refresh_fabric_loaders, daemon=True).start()
     # Sürüm listelerini önceden ısıt: "Yeni instance" penceresi ve Keşfet ilk açılışta beklemesin
     def _warm():
@@ -4817,6 +4822,20 @@ def main():
                 pass
     threading.Thread(target=_warm, daemon=True).start()
     threading.Thread(target=discord_worker, daemon=True).start()
+    if MOBILE:   # pencere/izleyici yok: sunucu çalışır, arayüz telefonun tarayıcısında açılır
+        print(f"Mobil mod: tarayıcında aç -> {url}")
+        opener = shutil.which("termux-open-url")
+        try:
+            subprocess.Popen([opener, url]) if opener else webbrowser.open(url)
+        except Exception:
+            pass
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            httpd.server_close()
+        return
     if open_native_window(url, httpd):
         return
     threading.Thread(target=watchdog, daemon=True).start()

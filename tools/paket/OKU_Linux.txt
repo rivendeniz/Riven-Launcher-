@@ -1,0 +1,4 @@
+Riven Launcher - Linux
+Kurulum:   bash kur.sh
+Baslat:    riven
+Minecraft'i baslatabilir. Java otomatik indirilir. Gerekli: python3 + python3-venv.

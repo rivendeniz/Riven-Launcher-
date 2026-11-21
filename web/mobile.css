@@ -1,0 +1,15 @@
+/* Dar ekran (telefon) düzeni: yan çubuk alta iner. Yalnızca max-width:760px'te yüklenir. */
+html, body { overscroll-behavior: none; }
+.app { height: 100dvh; grid-template-columns: 1fr; grid-template-rows: 52px 1fr 38px 64px; }
+.rail { grid-row: 4; grid-column: 1; flex-direction: row; justify-content: space-around; align-items: center;
+  gap: 4px; padding: 6px 8px; border-right: 0; border-top: 1px solid var(--line); overflow-x: auto; }
+.rail .logo, .rail .spacer { display: none; }
+.rail-btn { width: 44px; height: 44px; flex: none; }
+.topbar { grid-column: 1; padding: 0 12px; }
+.content { grid-column: 1; padding: 14px 12px 12px; }
+.statusbar { grid-column: 1; padding: 0 12px; gap: 10px; font-size: 11.5px; }
+.cards { grid-template-columns: 1fr !important; }
+.page-head h1 { font-size: 22px; }
+.winctl { display: none !important; }
+button, .btn, .rail-btn { min-height: 40px; }
+input, select, textarea { font-size: 16px; }   /* iOS/Android otomatik yakınlaştırmayı önler */

@@ -346,6 +346,7 @@ async function route() {
 
 /* ---------------------------------------------------------------- oyun / instance */
 function playState(inst) {
+  if (S.mobile) return { label: 'Mobilde oynanamaz', disabled: true };
   if (S.running.includes(inst.id)) return { label: 'Çalışıyor', disabled: true };
   if (S.preparing === inst.id) return { label: 'Hazırlanıyor…', disabled: true };
   if (S.preparing) return { label: 'Meşgul', disabled: true };

@@ -1,0 +1,8 @@
+Riven Launcher - Mobil (Android / Termux)
+1) F-Droid'den Termux kur (Play Store surumu eskidir).
+2) Bu zipi telefonda ac, Termux'ta:  termux-setup-storage
+   sonra klasore gir:  cd ~/storage/downloads/RivenLauncher-Mobil
+3) sh kur_termux.sh
+4) riven   ->  tarayicida http://127.0.0.1:8780
+Calisanlar: instance, mod/resourcepack/shader, dunya, skin, hesap, Modrinth/CurseForge, ayarlar.
+Calismayan: Minecraft'i baslatmak (telefonda Java masaustu oyunu calistirilamaz).

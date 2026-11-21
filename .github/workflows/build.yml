@@ -11,6 +11,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,14 +52,54 @@ jobs:
         shell: pwsh
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=${{ steps.ver.outputs.version }} installer.iss'
 
+      - name: Linux ve Mobil paketlerini olustur
+        run: python tools/paketle.py hepsi
+
       - name: GitHub Release yayinla (launcher otomatik guncellenir)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: Riven Launcher ${{ steps.ver.outputs.version }}
-          files: installer/RivenLauncher-Setup.exe
+          files: |
+            installer/RivenLauncher-Setup.exe
+            cikti/RivenLauncher-Linux.tar.gz
+            cikti/RivenLauncher-Mobil.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: RivenLauncher-Setup
           path: installer/RivenLauncher-Setup.exe
+
+  # Android APK (Chaquopy + WebView): arayuz ve tum yonetim islevleri, oyun baslatma YOK
+  apk:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Surumu yaz ve Android projesini hazirla
+        run: |
+          sed -i "s/^APP_VERSION = \"[0-9.]*\"/APP_VERSION = \"${{ needs.build.outputs.version }}\"/" riven.py
+          python tools/paketle.py apk
+      - name: APK derle
+        run: gradle -p android assembleDebug --no-daemon
+      - name: APK adini duzenle
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk RivenLauncher-Mobil.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build.outputs.version }}
+          files: RivenLauncher-Mobil.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RivenLauncher-Mobil-apk
+          path: RivenLauncher-Mobil.apk

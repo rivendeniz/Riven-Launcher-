@@ -3,3 +3,11 @@ __pycache__/
 build/
 dist/
 installer/
+cikti/
+.venv/
+android/app/src/main/python/
+android/app/src/main/assets/
+android/app/src/main/res/mipmap-xxxhdpi/
+android/.gradle/
+android/build/
+android/app/build/
