@@ -1504,13 +1504,19 @@ async function pageAccount() {
       catch (e) { toast(e.message, 'error'); }
     } }, 'Kaydet'));
 
-  let ms;
+  let ms, official = null;
   if (a.mode === 'microsoft') {
     ms = h('div', { class: 'panel form' }, h('h3', { class: 'section-title' }, 'Microsoft hesabı'),
       h('p', { style: 'margin:0' }, [h('span', { class: 'chip green' }, 'Bağlı'), ` ${a.name}`]),
-      h('button', { class: 'btn danger', style: 'align-self:flex-start', onclick: async () => {
-        try { await api('/account/logout', { method: 'POST' }); route(); } catch (e) { toast(e.message, 'error'); }
-      } }, 'Çıkış yap'));
+      a.imported ? h('p', { class: 'muted', style: 'margin:0;font-size:12.5px' }, 'Resmi launcher\'dan aktarıldı • yalnızca bu bilgisayarda, bellekte tutulur. Süre dolarsa yeniden aktar.') : null,
+      h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' },
+        h('button', { class: 'btn primary', onclick: async () => {
+          try { S.account = await api('/account/mode', { method: 'POST', body: { mode: 'offline' } }); toast('Çevrimdışı moda geçildi'); route(); }
+          catch (e) { toast(e.message, 'error'); }
+        } }, 'Çevrimdışına geç'),
+        h('button', { class: 'btn danger', onclick: async () => {
+          try { await api('/account/logout', { method: 'POST' }); route(); } catch (e) { toast(e.message, 'error'); }
+        } }, 'Çıkış yap')));
   } else {
     const cid = a.client_id_baked ? null
       : h('input', { class: 'input', value: a.client_id, placeholder: 'Azure uygulama (Client) ID' });
@@ -1551,6 +1557,16 @@ async function pageAccount() {
         watch();
       } catch (e) { toast(e.message, 'error'); }
     } }, 'Microsoft ile giriş yap');
+    official = h('div', { class: 'panel form' }, h('h3', { class: 'section-title' }, 'Premium (resmi launcher)'),
+      h('p', { class: 'muted', style: 'margin:0' }, a.has_session
+        ? 'Premium oturumun hazır. Tek tıkla premium\'a dönebilirsin.'
+        : 'Bu bilgisayardaki resmi Minecraft launcher\'ın oturumunu aktarır. Token yalnızca bellekte tutulur, hiçbir yere kaydedilmez veya paylaşılmaz. Yaklaşık 24 saat geçerlidir; süre dolunca resmi launcher\'ı açıp tekrar bas.'),
+      h('button', { class: 'btn primary', style: 'align-self:flex-start', onclick: async () => {
+        try {
+          S.account = await api('/account/mode', { method: 'POST', body: { mode: 'premium' } });
+          toast(`Premium: ${S.account.name}`); route();
+        } catch (e) { toast(e.message, 'error'); }
+      } }, a.has_session ? 'Premium\'a geç' : 'Resmi launcher\'dan aktar'));
     ms = h('div', { class: 'panel form' }, h('h3', { class: 'section-title' }, 'Microsoft ile giriş'),
       h('div', { class: 'notice', style: 'margin:0' },
         'Premium sunuculara girmek için gerekir. Giriş, bir kod yazarak yapılır (adres yapıştırmak yok). Ama Minecraft API\'sini kullanabilmesi için Azure uygulamanın Microsoft tarafından onaylanmış olması gerekir (form: aka.ms/mce-reviewappid). Onay gelene kadar giriş "AzureAppNotPermitted" hatası verir. Çevrimdışı mod buna gerek duymaz.'),
@@ -1567,7 +1583,7 @@ async function pageAccount() {
   return [h('header', { class: 'page-head' }, h('div', {}, h('h1', {}, 'Riven Launcher'),
     h('p', { class: 'sub' }, 'Hesap ve Discord • Token\'lar ve API anahtarları düz dosyaya yazılmaz, sistem kimlik deposunda tutulur.'))),
   h('div', { style: 'display:flex;flex-direction:column;gap:18px' }, skins, themes, gameUi,
-    h('div', { class: 'acc-cols' }, offline, ms), hud, connections, friends, discord)];
+    h('div', { class: 'acc-cols' }, offline, ms), official, hud, connections, friends, discord)];
 }
 
 async function friendsCard() {

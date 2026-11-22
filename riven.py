@@ -999,9 +999,16 @@ def auto_login():
     threading.Thread(target=work, daemon=True).start()
 
 
+def ms_data():
+    """Aktif Microsoft oturumu; 'çevrimdışına geç' açıksa oturum bellekte durur ama kullanılmaz."""
+    return None if CFG.get("force_offline") else ACCOUNT["data"]
+
+
 def account_info():
-    data = ACCOUNT["data"]
+    data = ms_data()
     return {
+        "has_session": bool(ACCOUNT["data"]),
+        "imported": bool(ACCOUNT["data"] and ACCOUNT["data"].get("imported")),
         "mode": "microsoft" if data else "offline",
         "name": data["name"] if data else CFG.get("offline_name", "Player"),
         "offline_name": CFG.get("offline_name", "Player"),
@@ -1014,12 +1021,17 @@ def account_info():
 
 def current_auth():
     AUTO_LOGIN_DONE.wait(15)   # açılıştaki otomatik giriş bitsin (çevrimdışı ada düşmeyelim)
-    data = ACCOUNT["data"]
-    if data and time.time() - ACCOUNT["t"] > TOKEN_FRESH_SECONDS:   # taze token'ı yeniden yenileme: 1-3 sn kazandırır
+    data = ms_data()
+    if data and data.get("imported"):
+        if data.get("expires", 0) and time.time() > data["expires"] - 120:
+            raise RuntimeError("Resmi launcher oturumunun süresi dolmuş. Resmi launcher'ı bir kez açıp "
+                               "Hesap sayfasında 'Premium'a geç'e bas (yeniden içe aktarılır).")
+    elif data and time.time() - ACCOUNT["t"] > TOKEN_FRESH_SECONDS:   # taze token'ı yeniden yenileme: 1-3 sn kazandırır
         try:
             data = refresh_session(data["refresh_token"])
         except Exception as exc:
             add_log(f"Token yenilenemedi, eskisiyle denenecek: {exc}")
+    if data:
         return {"username": data["name"], "uuid": data["id"], "token": data["access_token"]}
     name = CFG.get("offline_name", "Player")
     return {"username": name, "uuid": offline_uuid(name), "token": "0"}
@@ -1639,7 +1651,7 @@ def install_riven_skin(inst, game_dir, auth):
     opt = game_dir / "options.txt"
     packs = game_dir / "resourcepacks"
     dest = packs / RIVEN_SKIN_FILE
-    skin = skin_active_bytes() if not ACCOUNT["data"] else None
+    skin = skin_active_bytes() if not ms_data() else None
     if skin is None:
         if dest.exists():
             try:
@@ -2838,9 +2850,115 @@ def r_login_finish(m, q, b):
     return account_info()
 
 
+# ------------------------------------------- resmi Minecraft launcher'ından oturum aktarma (yalnızca bu bilgisayar)
+def official_account_files():
+    home = Path.home()
+    roots = []
+    if sys.platform.startswith("win"):
+        for env in ("APPDATA", "LOCALAPPDATA"):
+            if os.environ.get(env):
+                roots.append(Path(os.environ[env]) / ".minecraft")
+        if os.environ.get("LOCALAPPDATA"):   # Microsoft Store sürümü
+            roots.append(Path(os.environ["LOCALAPPDATA"]) / "Packages" / "Microsoft.4297127D64EC6_8wekyb3d8bbwe"
+                         / "LocalCache" / "Local" / ".minecraft")
+    elif sys.platform == "darwin":
+        roots.append(home / "Library" / "Application Support" / "minecraft")
+    else:
+        roots.append(home / ".minecraft")
+    out = []
+    for r in roots:
+        for name in ("launcher_accounts.json", "launcher_accounts_microsoft_store.json"):
+            if (r / name).is_file():
+                out.append(r / name)
+    return out
+
+
+def _iso_to_epoch(text):
+    try:
+        return datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def import_official_session():
+    """Resmi launcher'ın bu bilgisayardaki oturumunu okur ve yalnızca bellekte tutar.
+    Token diske/anahtarlığa/loga yazılmaz; launcher kapanınca silinir."""
+    files = official_account_files()
+    if not files:
+        raise ApiError("Resmi Minecraft launcher'ın hesap dosyası bulunamadı. Launcher kurulu ve girişli mi?")
+    best = None
+    for f in files:
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        accounts = doc.get("accounts") or {}
+        active = doc.get("activeAccountLocalId")
+        order = ([active] if active in accounts else []) + [k for k in accounts if k != active]
+        for key in order:
+            acc = accounts[key] or {}
+            token = acc.get("accessToken")
+            prof = acc.get("minecraftProfile") or {}
+            if token and prof.get("id") and prof.get("name"):
+                exp = _iso_to_epoch(acc.get("accessTokenExpiresAt")) if acc.get("accessTokenExpiresAt") else 0.0
+                cand = (exp, token, prof)
+                if best is None or cand[0] > best[0]:
+                    best = cand
+                break
+    if best is None:
+        raise ApiError("Resmi launcher'da kullanılabilir oturum yok. Launcher'ı açıp giriş yap; yeni sürümler "
+                       "token'ı şifreli sakladığı için bu yöntem çalışmayabilir.")
+    exp, token, prof = best
+    req = urllib.request.Request("https://api.minecraftservices.com/minecraft/profile",
+                                 headers={"Authorization": f"Bearer {token}", "User-Agent": UA})
+    try:
+        with open_url(req, 15) as resp:
+            live = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise ApiError("Resmi launcher oturumunun süresi dolmuş. Launcher'ı bir kez açıp tekrar dene.")
+        raise ApiError(f"Mojang oturumu doğrulayamadı ({exc.code}).", 502)
+    except Exception as exc:
+        raise ApiError(f"Mojang'a ulaşılamadı: {explain_net_error(exc)}", 502)
+    data = {"name": live.get("name") or prof["name"], "id": live.get("id") or prof["id"],
+            "access_token": token, "refresh_token": None, "imported": True, "expires": exp}
+    ACCOUNT["data"], ACCOUNT["t"] = data, time.time()
+    CFG.pop("force_offline", None)
+    save_cfg()
+    add_log(f"Resmi launcher oturumu içe aktarıldı: {data['name']}")
+    return data
+
+
+@route("POST", "/account/import-official")
+def r_import_official(m, q, b):
+    import_official_session()
+    skin_sync_async()
+    return account_info()
+
+
+@route("POST", "/account/mode")
+def r_account_mode(m, q, b):
+    """Tek tıkla çevrimdışı <-> premium. Çevrimdışına geçmek oturumu silmez."""
+    if b.get("mode") == "offline":
+        CFG["force_offline"] = True
+        save_cfg()
+        return account_info()
+    data = ACCOUNT["data"]
+    expired = bool(data and data.get("imported") and data.get("expires") and time.time() > data["expires"] - 120)
+    if not data or expired:
+        import_official_session()     # oturum yok / süresi dolmuş: resmi launcher'dan tazele
+    else:
+        CFG.pop("force_offline", None)
+        save_cfg()
+    skin_sync_async()
+    return account_info()
+
+
 @route("POST", "/account/logout")
 def r_logout(m, q, b):
     ACCOUNT["data"] = None
+    CFG.pop("force_offline", None)
+    save_cfg()
     if keyring is not None:
         try:
             keyring.delete_password(KEYRING_SERVICE, KEYRING_USER)
@@ -3201,7 +3319,7 @@ def data_url_bytes(raw):
 
 def mojang_upload_skin(data, slim):
     """Microsoft hesabının gerçek skin'ini değiştirir (oyunda herkes görür)."""
-    if not ACCOUNT["data"]:
+    if not ms_data():
         raise ApiError("Bunun için Microsoft hesabıyla giriş yapmalısın.")
     auth = current_auth()
     boundary = "----riven" + secrets.token_hex(12)
@@ -3223,19 +3341,19 @@ def mojang_upload_skin(data, slim):
         raise ApiError(f"Mojang skin'i reddetti ({exc.code}){': ' + hint if hint else ''}.", 502)
     except Exception as exc:
         raise ApiError(f"Mojang'a ulaşılamadı: {explain_net_error(exc)}", 502)
-    name = ACCOUNT["data"]["name"].lower()
+    name = ms_data()["name"].lower()
     for ext in (".png", ".none"):
         (SKIN_DIR / f"{name}{ext}").unlink(missing_ok=True)
 
 
 def skin_sync_mojang(force=False):
     """Microsoft hesabındaysa seçili skin'i Mojang'a yükler (oyunda herkes görür). Değişmediyse tekrar yüklemez."""
-    if not ACCOUNT["data"]:
+    if not ms_data():
         return False
     data = skin_active_bytes()
     if data is None:
         return False
-    digest = hashlib.sha1(data).hexdigest() + ":" + ACCOUNT["data"]["id"]
+    digest = hashlib.sha1(data).hexdigest() + ":" + ms_data()["id"]
     if not force and CFG.get("skin_applied") == digest:
         return False
     mojang_upload_skin(data, skin_is_slim(data))
@@ -3251,7 +3369,7 @@ def skin_sync_async():
             skin_sync_mojang()
         except Exception as exc:
             add_log(f"Skin Mojang hesabına yüklenemedi: {exc}")
-    if ACCOUNT["data"]:
+    if ms_data():
         threading.Thread(target=work, daemon=True).start()
 
 

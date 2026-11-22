@@ -25,7 +25,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
-      # Her push'a otomatik yapi numarasi eklenir (1.8.5 -> 1.8.5.<run>): sürümü elle artırmayı unutsan da
+      # Her push'a otomatik yapi numarasi eklenir (1.8.5 -> 1.8.5.<yyAAggssdd zaman damgasi>, her build bir öncekinden büyük): sürümü elle artırmayı unutsan da
       # yeni Release her seferinde eskisinden büyük olur ve launcher otomatik güncellenir. Numara derlemeden ÖNCE
       # riven.py'ye yazılır; böylece kurulan exe kendi sürümünü doğru bilir ve güncelleme döngüsüne girmez.
       - name: Surumu belirle ve riven.py'ye yaz
@@ -33,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           $m = Select-String -Path riven.py -Pattern '^APP_VERSION = "(\d+\.\d+\.\d+)(\.\d+)?"'
-          $v = "$($m.Matches[0].Groups[1].Value).${{ github.run_number }}"
+          $v = "$($m.Matches[0].Groups[1].Value).$([DateTime]::UtcNow.ToString('yyMMddHHmm'))"
           $txt = [System.IO.File]::ReadAllText("riven.py")
           $txt = [regex]::Replace($txt, '(?m)^APP_VERSION = "[\d\.]+"', "APP_VERSION = `"$v`"")
           [System.IO.File]::WriteAllText("riven.py", $txt, (New-Object System.Text.UTF8Encoding($false)))
