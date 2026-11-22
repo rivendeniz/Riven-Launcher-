@@ -17,6 +17,7 @@ import base64
 import ctypes
 import hashlib
 import inspect
+import io
 import json
 import os
 import random
@@ -1513,6 +1514,151 @@ def _options_set_packs(opt_path, mc, add=None, remove=None):
     os.replace(tmp, opt_path)
 
 
+# ---------------------------------------------------------------- oyun içi skin (çevrimdışı mod)
+# Çevrimdışı hesapta Minecraft skin indiremez; oyuncuya UUID'sinden türeyen varsayılan skin (Steve/Alex/Ari...)
+# verir. Seçili skin'i, o varsayılan skin'in dokusunun yerine geçen küçük bir resource pack ile oyuna aktarırız.
+RIVEN_SKIN_FILE = "RivenSkin.zip"
+RIVEN_SKIN_ENTRY = "file/" + RIVEN_SKIN_FILE
+DEFAULT_SKIN_NAMES = ["alex", "ari", "efe", "kai", "makena", "noor", "steve", "sunny", "zuri"]  # 1.20.2+ sırası
+
+
+def _java_uuid_hash(uuid_str):
+    """java.util.UUID.hashCode() (işaretli 32 bit)."""
+    n = uuid.UUID(str(uuid_str)).int
+    hilo = (n >> 64) ^ (n & ((1 << 64) - 1))
+    h = ((hilo >> 32) ^ hilo) & 0xFFFFFFFF
+    return h - (1 << 32) if h >= (1 << 31) else h
+
+
+def png_decode_rgba(data):
+    """8-bit RGB/RGBA, interlace'siz PNG -> (w, h, bytearray RGBA). Desteklenmeyen biçimde None."""
+    try:
+        pos, idat = 8, b""
+        w = h = depth = ctype = interlace = 0
+        while pos + 8 <= len(data):
+            ln, typ = struct.unpack(">I4s", data[pos:pos + 8])
+            body = data[pos + 8:pos + 8 + ln]
+            pos += 12 + ln
+            if typ == b"IHDR":
+                w, h, depth, ctype, _, _, interlace = struct.unpack(">IIBBBBB", body)
+            elif typ == b"IDAT":
+                idat += body
+            elif typ == b"IEND":
+                break
+        if depth != 8 or ctype not in (2, 6) or interlace != 0:
+            return None
+        bpp = 4 if ctype == 6 else 3
+        stride = w * bpp
+        raw = zlib.decompress(idat)
+        out, prev, i = bytearray(), bytearray(stride), 0
+        for _ in range(h):
+            ftype = raw[i]
+            line = bytearray(raw[i + 1:i + 1 + stride])
+            i += 1 + stride
+            for k in range(stride):
+                a = line[k - bpp] if k >= bpp else 0
+                up = prev[k]
+                c = prev[k - bpp] if k >= bpp else 0
+                if ftype == 1:
+                    line[k] = (line[k] + a) & 255
+                elif ftype == 2:
+                    line[k] = (line[k] + up) & 255
+                elif ftype == 3:
+                    line[k] = (line[k] + ((a + up) >> 1)) & 255
+                elif ftype == 4:
+                    pa, pb, pc = abs(up - c), abs(a - c), abs(a + up - 2 * c)
+                    pred = a if (pa <= pb and pa <= pc) else (up if pb <= pc else c)
+                    line[k] = (line[k] + pred) & 255
+            prev = line
+            if bpp == 4:
+                out += line
+            else:
+                for x in range(w):
+                    out += line[x * 3:x * 3 + 3] + b"\xff"
+        return w, h, out
+    except Exception:
+        return None
+
+
+def png_encode_rgba(w, h, rgba):
+    def chunk(typ, body):
+        return struct.pack(">I", len(body)) + typ + body + struct.pack(">I", zlib.crc32(typ + body) & 0xFFFFFFFF)
+    rows = b"".join(b"\x00" + bytes(rgba[y * w * 4:(y + 1) * w * 4]) for y in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+
+
+def skin_to_64x64(data):
+    """Eski 64x32 skin'i oyunun yaptığı gibi 64x64'e çevirir (sol kol/bacak sağdakinin aynası)."""
+    w, h = struct.unpack(">II", data[16:24])
+    if h == 64:
+        return data
+    dec = png_decode_rgba(data)
+    if not dec:
+        return data
+    _, _, src = dec
+    dst = bytearray(64 * 64 * 4)
+    dst[:len(src)] = src
+
+    def copy(x, y, xo, yo, cw, ch):    # (x,y) kaynağını yatay çevirerek (x+xo, y+yo)'ya kopyala
+        for dy in range(ch):
+            for dx in range(cw):
+                s = ((y + dy) * 64 + (x + dx)) * 4
+                d = ((y + yo + dy) * 64 + (x + xo + (cw - 1 - dx))) * 4
+                dst[d:d + 4] = dst[s:s + 4]
+    for args in ((4, 16, 16, 32, 4, 4), (8, 16, 16, 32, 4, 4), (0, 20, 24, 32, 4, 12), (4, 20, 16, 32, 4, 12),
+                 (8, 20, 8, 32, 4, 12), (12, 20, 16, 32, 4, 12), (44, 16, -8, 32, 4, 4), (48, 16, -8, 32, 4, 4),
+                 (40, 20, 0, 32, 4, 12), (44, 20, -8, 32, 4, 12), (48, 20, -16, 32, 4, 12), (52, 20, -8, 32, 4, 12)):
+        copy(*args)
+    return png_encode_rgba(64, 64, dst)
+
+
+def build_skin_pack(skin_png, uuid_str, mc):
+    """Oyuncunun çevrimdışı varsayılan skin dokusunu seçili skin ile değiştiren resource pack (zip baytları)."""
+    pf = mc_pack_format(mc)
+    png = skin_to_64x64(skin_png)
+    idx = _java_uuid_hash(uuid_str) % 18            # Python % = floorMod
+    files = {}
+    if pf >= 18:                                     # 1.20.2+: slim/ ve wide/ altında 9'ar varsayılan skin
+        name = DEFAULT_SKIN_NAMES[idx % 9]
+        for kind in ("slim", "wide"):
+            files[f"assets/minecraft/textures/entity/player/{kind}/{name}.png"] = png
+    else:                                            # eski sürümler: yalnızca Steve / Alex
+        files["assets/minecraft/textures/entity/" + ("alex" if idx & 1 else "steve") + ".png"] = png
+    files["pack.mcmeta"] = json.dumps({"pack": {"pack_format": pf, "description": "§aRiven Skin"}}).encode("utf-8")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for arc, blob in files.items():
+            zf.writestr(zipfile.ZipInfo(arc, (2026, 1, 1, 0, 0, 0)), blob)
+    return buf.getvalue()
+
+
+def install_riven_skin(inst, game_dir, auth):
+    """Çevrimdışı modda seçili skin'i oyuna aktarır; Microsoft modunda skin Mojang'dan gelir (pack kaldırılır)."""
+    mc = inst["mc_version"]
+    opt = game_dir / "options.txt"
+    packs = game_dir / "resourcepacks"
+    dest = packs / RIVEN_SKIN_FILE
+    skin = skin_active_bytes() if not ACCOUNT["data"] else None
+    if skin is None:
+        if dest.exists():
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            _options_set_packs(opt, mc, remove=RIVEN_SKIN_ENTRY)
+        return
+    packs.mkdir(parents=True, exist_ok=True)
+    data = build_skin_pack(skin, auth["uuid"], mc)
+    if not dest.exists() or dest.read_bytes() != data:
+        tmp = dest.with_name(dest.name + ".part")
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+    _options_set_packs(opt, mc, remove=RIVEN_SKIN_ENTRY)
+    _options_set_packs(opt, mc, add=RIVEN_SKIN_ENTRY)    # en sona: en yüksek öncelik
+    add_log(f"Skin oyuna aktarıldı (çevrimdışı): {inst['name']}")
+
+
 def install_riven_theme(inst, game_dir):
     """Oyun başlamadan önce: saate uygun Riven temasını resourcepacks'e yazar ve her başlatışta açar.
     Tema kapalıysa pack'i kaldırır. Açık olduğunda her seferinde resourcePacks listesinin sonuna
@@ -1909,6 +2055,14 @@ def launch_worker(inst, repair):
             install_riven_theme(inst, game_dir)
         except Exception as exc:
             add_log(f"Riven teması kurulamadı (oyun yine de başlıyor): {exc}")
+        try:
+            install_riven_skin(inst, game_dir, auth)
+        except Exception as exc:
+            add_log(f"Skin oyuna aktarılamadı (oyun yine de başlıyor): {exc}")
+        try:
+            skin_sync_mojang()
+        except Exception as exc:
+            add_log(f"Skin Mojang hesabına yüklenemedi (oyun yine de başlıyor): {exc}")
 
         options = {
             "username": auth["username"], "uuid": auth["uuid"], "token": auth["token"],
@@ -2900,6 +3054,7 @@ def r_friends_remove(m, q, b):
 @route("POST", "/skin/upload")  # giriş ekranı ve eski arayüz: kütüphaneye ekler
 def r_skin_upload(m, q, b):
     skin_add(b.get("name") or "Yüklenen skin", data_url_bytes(b.get("data_url")))
+    skin_sync_async()
     return {"ok": True}
 
 
@@ -3071,6 +3226,33 @@ def mojang_upload_skin(data, slim):
     name = ACCOUNT["data"]["name"].lower()
     for ext in (".png", ".none"):
         (SKIN_DIR / f"{name}{ext}").unlink(missing_ok=True)
+
+
+def skin_sync_mojang(force=False):
+    """Microsoft hesabındaysa seçili skin'i Mojang'a yükler (oyunda herkes görür). Değişmediyse tekrar yüklemez."""
+    if not ACCOUNT["data"]:
+        return False
+    data = skin_active_bytes()
+    if data is None:
+        return False
+    digest = hashlib.sha1(data).hexdigest() + ":" + ACCOUNT["data"]["id"]
+    if not force and CFG.get("skin_applied") == digest:
+        return False
+    mojang_upload_skin(data, skin_is_slim(data))
+    CFG["skin_applied"] = digest
+    save_cfg()
+    add_log("Skin Mojang hesabına yüklendi.")
+    return True
+
+
+def skin_sync_async():
+    def work():
+        try:
+            skin_sync_mojang()
+        except Exception as exc:
+            add_log(f"Skin Mojang hesabına yüklenemedi: {exc}")
+    if ACCOUNT["data"]:
+        threading.Thread(target=work, daemon=True).start()
 
 
 # ---------------------------------------------------------------------- CurseForge
@@ -3987,6 +4169,7 @@ def r_skins(m, q, b):
 @route("POST", "/skins/add")
 def r_skins_add(m, q, b):
     item = skin_add(b.get("name"), data_url_bytes(b.get("data_url")))
+    skin_sync_async()
     return {**skins_public(), "added": item["id"]}
 
 
@@ -4001,6 +4184,7 @@ def r_skins_import(m, q, b):
     if not data:
         raise ApiError(f"\"{name}\" için skin alınamadı (premium hesap değil ya da Mojang'a ulaşılamıyor).")
     item = skin_add(name, data)
+    skin_sync_async()
     return {**skins_public(), "added": item["id"]}
 
 
@@ -4011,6 +4195,7 @@ def r_skins_select(m, q, b):
         raise ApiError("Skin bulunamadı.", 404)
     CFG["skin_active"] = sid
     save_cfg()
+    skin_sync_async()
     return skins_public()
 
 

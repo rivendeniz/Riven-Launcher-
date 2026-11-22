@@ -1465,8 +1465,8 @@ async function skinSection(a) {
     h('div', { class: 'import-row' }, uname, importBtn),
     grid,
     h('p', { class: 'muted', style: 'margin:2px 0 0;font-size:12.5px;line-height:1.5' }, ms
-      ? 'Burada seçtiğin skin launcher\'da görünür. Oyunda herkesin görmesi için "Hesabıma uygula" ile Mojang hesabına yükle.'
-      : 'Çevrimdışı modda skin yalnızca launcher\'da görünür; oyun içi skin için Microsoft hesabıyla giriş yapıp "Hesabıma uygula"yı kullanabilirsin.'));
+      ? 'Seçtiğin skin otomatik olarak Mojang hesabına yüklenir ve oyunda herkes görür (oyun zaten açıksa tekrar girince değişir).'
+      : 'Seçtiğin skin oyunu başlattığında oyuna otomatik uygulanır. Çevrimdışı modda sadece sen görürsün; herkesin görmesi için Microsoft hesabıyla giriş yap.'));
   return h('div', { class: 'acc-top' }, stage, library);
 }
 
